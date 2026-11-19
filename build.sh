@@ -5,7 +5,7 @@
 set -euo pipefail
 cd "${0:A:h}"
 APP="Gamdl Desk.app"
-VERSION=1.0.0
+VERSION=1.2.0
 
 BUILD_ARGS=(-c release --arch arm64 --arch x86_64)
 swift build "${BUILD_ARGS[@]}" --product GamdlDesk
