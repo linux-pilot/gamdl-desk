@@ -155,3 +155,30 @@ import Testing
         #expect(!OutputEvent.indicatesSignInProblem("✓ Authentication Song: downloaded"))
     }
 }
+
+@Suite struct SavedAuthTests {
+    static let sample = """
+    config_version: 1
+    auth:
+      mode: %@
+      cookies_path: /Users/x/.gamdl/cookies.txt
+      media_user_token: '[REDACTED]'
+    download:
+      overwrite: false
+      mode: not-this-one
+    """
+
+    @Test func readsSavedMode() {
+        #expect(SavedAuth.parse(configShow: Self.sample.replacingOccurrences(of: "%@", with: "cookies")) == .mode("cookies"))
+        #expect(SavedAuth.parse(configShow: Self.sample.replacingOccurrences(of: "%@", with: "'media-user-token'")) == .mode("media-user-token"))
+    }
+
+    @Test func nullMeansNotSignedIn() {
+        #expect(SavedAuth.parse(configShow: Self.sample.replacingOccurrences(of: "%@", with: "null")) == SavedAuth.none)
+    }
+
+    @Test func unreadableOutputIsNil() {
+        #expect(SavedAuth.parse(configShow: "Gamdl 4.0.2\n\nError: invalid config") == nil)
+        #expect(SavedAuth.parse(configShow: "download:\n  mode: cookies\n") == nil)
+    }
+}

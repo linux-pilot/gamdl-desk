@@ -13,7 +13,7 @@ Paste Apple Music links, pick codecs and an output folder, and press **Download*
 - **Link checking as you paste**: Apple Music links (album, song, playlist, artist, music video) and ISRC codes are counted. Duplicates are ignored, and anything else is flagged and never passed to gamdl.
 - **Activity list**: shows what was saved, skipped or failed, with Show in Finder for each file. The status bar shows elapsed time and totals.
 - **Fast log**: copy it, save it, or search it with ⌘F. It stays responsive with tens of thousands of lines.
-- **Sign-in help**: if gamdl can't sign in, a banner offers to run `gamdl auth` in Terminal. You can also point the app at a `cookies.txt`.
+- **Sign-in help**: shows whether gamdl is signed in. If it can't sign in, a banner offers to run `gamdl auth` in Terminal and confirms when it worked. You can also point the app at a `cookies.txt`.
 - **Artist links**: choose what an artist link downloads (all albums, singles, top songs, music videos, …) instead of hitting gamdl's interactive menu.
 - **Safe stopping**: Stop (⌘.) escalates from interrupt to terminate to kill if gamdl doesn't exit. Quitting during a download asks first and stops gamdl, so it isn't left running.
 - **Adapts to window size**: works from a compact 520 pt window up to full screen. The Options inspector can be hidden (⌥⌘I), and it follows light and dark mode.
@@ -50,7 +50,7 @@ Covers link parsing, command-line building, settings persistence, gamdl output p
 
 gamdl needs to sign in before it can download. Do one of these:
 
-- Click **Sign In with Terminal…** (in Options, or the banner that appears after a sign-in error). It runs `gamdl auth` in Terminal, which asks a few questions.
+- Click **Sign In with Terminal…** (in Options, or the banner that appears after a sign-in error). It runs `gamdl auth` in Terminal, which asks a few questions. The app waits for it and confirms when you're signed in, or tells you if it didn't finish.
 - Or choose a Netscape `cookies.txt` exported from music.apple.com while signed in (it must contain the `media-user-token` cookie).
 
 ## Options
@@ -64,6 +64,8 @@ gamdl needs to sign in before it can download. Do one of these:
 | Artist links | what to download from an artist page |
 | Files | save cover art (jpg/png), save playlist `.m3u`, overwrite existing files |
 | Performance | parallel downloads (1–8) |
+
+Options → Account shows whether gamdl is signed in (and how). It re-checks whenever you switch back to the app, so a `gamdl auth` you run yourself is picked up too. A saved sign-in can still expire later; a download then reports it and offers to sign in again.
 
 Settings are remembered between launches. Anything not exposed here can be set in gamdl's own config at `~/.gamdl/config.yml`.
 

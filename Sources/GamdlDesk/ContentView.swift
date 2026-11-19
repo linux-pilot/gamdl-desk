@@ -107,6 +107,25 @@ struct ContentView: View {
                 Button("Copy Command") { copy(DownloadController.installCommand) }
                 Button("Check Again") { controller.locateGamdl() }
             }
+        } else if controller.signInFlow == .waiting {
+            Banner(systemImage: "terminal", tint: .blue,
+                   title: "Finish signing in in Terminal",
+                   message: "Answer gamdl's questions in the Terminal window. This updates by itself when you're done.",
+                   showsProgress: true) {
+                Button("Cancel") { controller.cancelSignInWait() }
+            }
+        } else if case .succeeded(let mode) = controller.signInFlow {
+            Banner(systemImage: "checkmark.circle.fill", tint: .green,
+                   title: "Signed in to Apple Music",
+                   message: "gamdl saved your sign-in (\(SavedAuth.label(for: mode))). You can download now.") {
+                Button("OK") { controller.dismissSignInResult() }
+            }
+        } else if case .failed(let reason) = controller.signInFlow {
+            Banner(systemImage: "exclamationmark.triangle.fill", tint: .orange,
+                   title: "Sign-in didn't finish", message: reason) {
+                Button("Try Again") { controller.signInInTerminal() }
+                Button("Dismiss") { controller.dismissSignInResult() }
+            }
         } else if controller.needsSignIn && !signInDismissed {
             Banner(systemImage: "person.crop.circle.badge.exclamationmark", tint: .blue,
                    title: "gamdl needs to sign in to Apple Music",
@@ -448,6 +467,7 @@ struct Banner<Actions: View>: View {
     let tint: Color
     let title: String
     let message: String
+    var showsProgress = false
     @ViewBuilder let actions: Actions
 
     var body: some View {
@@ -465,8 +485,12 @@ struct Banner<Actions: View>: View {
         .overlay(alignment: .bottom) { Divider() }
     }
 
-    private var icon: some View {
-        Image(systemName: systemImage).foregroundStyle(tint).font(.title3).frame(width: 20)
+    @ViewBuilder private var icon: some View {
+        if showsProgress {
+            ProgressView().controlSize(.small).frame(width: 20)
+        } else {
+            Image(systemName: systemImage).foregroundStyle(tint).font(.title3).frame(width: 20)
+        }
     }
 
     private var text: some View {

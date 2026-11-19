@@ -12,6 +12,12 @@ struct OptionsInspector: View {
             && !FileManager.default.fileExists(atPath: options.expandedCookiesPath)
     }
 
+    private var signInButtonTitle: String {
+        if controller.signInFlow == .waiting { return "Waiting for Terminal…" }
+        if case .mode = controller.savedAuth, !controller.needsSignIn { return "Sign In Again…" }
+        return "Sign In with Terminal…"
+    }
+
     var body: some View {
         Form {
             Section {
@@ -21,6 +27,7 @@ struct OptionsInspector: View {
             }
 
             Section {
+                SignInStatus(controller: controller, usesCookiesFile: !options.cookiesPath.trimmingCharacters(in: .whitespaces).isEmpty)
                 PathField(title: "Cookies file", path: $options.cookiesPath, directory: false,
                           placeholder: "Optional", allowsClear: true)
                 if cookiesMissing {
@@ -28,8 +35,8 @@ struct OptionsInspector: View {
                         .foregroundStyle(.red)
                         .font(.caption)
                 }
-                Button("Sign In with Terminal…") { controller.signInInTerminal() }
-                    .disabled(controller.gamdlPath == nil)
+                Button(signInButtonTitle) { controller.signInInTerminal() }
+                    .disabled(controller.gamdlPath == nil || controller.signInFlow == .waiting)
             } header: {
                 Text("Account")
             } footer: {
@@ -163,5 +170,46 @@ struct Footnote: View {
             .foregroundStyle(.secondary)
             .multilineTextAlignment(.leading)
             .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// One line saying whether gamdl can sign in, and how.
+struct SignInStatus: View {
+    let controller: DownloadController
+    let usesCookiesFile: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            status
+            Spacer(minLength: 4)
+            if controller.checkingAuth { ProgressView().controlSize(.small) }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    @ViewBuilder private var status: some View {
+        if controller.gamdlPath == nil {
+            Label("gamdl isn't installed", systemImage: "xmark.circle.fill").foregroundStyle(.secondary)
+        } else if controller.signInFlow == .waiting {
+            Label("Signing in in Terminal…", systemImage: "terminal").foregroundStyle(.secondary)
+        } else if controller.needsSignIn, usesCookiesFile || controller.savedAuth != SavedAuth.none {
+            Label(usesCookiesFile ? "The cookies file was rejected" : "The saved sign-in was rejected",
+                  systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+        } else if usesCookiesFile {
+            Label("Using the cookies file below", systemImage: "doc.text.fill").foregroundStyle(.secondary)
+        } else {
+            switch controller.savedAuth {
+            case .mode(let mode):
+                Label("Signed in · \(SavedAuth.label(for: mode))", systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+            case .none?:
+                Label("Not signed in", systemImage: "person.crop.circle.badge.exclamationmark")
+                    .foregroundStyle(.orange)
+            case nil:
+                Label(controller.checkingAuth ? "Checking sign-in…" : "Sign-in status unknown",
+                      systemImage: "questionmark.circle").foregroundStyle(.secondary)
+            }
+        }
     }
 }

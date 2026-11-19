@@ -4,7 +4,7 @@ import AppKit
 /// UI test hook, compiled into debug builds only. Launch with GAMDL_DESK_DRIVER=/path/commands.txt,
 /// write commands to that file, then `kill -USR1 <pid>`. One command per line:
 ///   size <w> <h> | input <text, \n for newlines> | lines <fake gamdl output, \n separated>
-///   download | stop | tab activity|log
+///   download | stop | signin | refresh | tab activity|log
 ///   options on|off | dark | light | snap <png path>
 /// Snapshots are taken by the app itself, so they need no screen-recording permission.
 @MainActor
@@ -42,6 +42,8 @@ enum DebugDriver {
             NotificationCenter.default.post(name: inputNotification, object: arg.replacingOccurrences(of: "\\n", with: "\n"))
         case "download": NotificationCenter.default.post(name: downloadNotification, object: nil)
         case "stop": controller.stop()
+        case "signin": controller.signInInTerminal() // runs GAMDL_DESK_AUTH_COMMAND instead of Terminal
+        case "refresh": controller.refreshAuthStatus()
         case "lines": controller.debugInject(arg.components(separatedBy: "\\n"))
         case "tab": UserDefaults.standard.set(arg == "log" ? "Log" : "Activity", forKey: "resultsTab")
         case "options": UserDefaults.standard.set(arg == "on", forKey: "showOptions")

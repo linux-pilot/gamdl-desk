@@ -30,6 +30,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidBecomeActive(_ notification: Notification) {
         NSApp.dockTile.badgeLabel = nil
+        // You may have signed in (or out) with gamdl elsewhere, e.g. in Terminal.
+        controller?.refreshAuthStatus()
     }
 
     /// Don't leave gamdl running in the background after the app quits.
