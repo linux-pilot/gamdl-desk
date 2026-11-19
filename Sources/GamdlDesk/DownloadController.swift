@@ -48,6 +48,9 @@ final class DownloadController {
     private(set) var phase: Phase = .idle
     private(set) var items: [ActivityItem] = []
     private(set) var needsSignIn = false
+    /// The last download asked for ALAC and Apple refused the key: lossless needs gamdl's Wrapper.
+    private(set) var losslessNeedsWrapper = false
+    @ObservationIgnored private var runWantsLossless = false
     private(set) var gamdlPath: String?
     private(set) var gamdlVersion: String?
     static let signInDirPrefix = "gamdl-desk-auth-"
@@ -194,6 +197,8 @@ final class DownloadController {
         let arguments = options.arguments(inputs: inputs)
         items = []
         needsSignIn = false
+        losslessNeedsWrapper = false
+        runWantsLossless = options.songCodecNeedsWrapper
         if signInFlow != .waiting { signInFlow = .idle }
         if !log.lines.isEmpty { log.append([""]) }
         log.append(["$ gamdl " + arguments.map(Self.shellQuoted).joined(separator: " ")])
@@ -225,11 +230,16 @@ final class DownloadController {
         stop()
     }
 
+    func dismissLosslessNotice() { losslessNeedsWrapper = false }
+
+    static let wrapperURL = URL(string: "https://github.com/glomatico/wrapper-v2")!
+
     func clear() {
         guard !isRunning else { return }
         log.clear()
         items = []
         needsSignIn = false
+        losslessNeedsWrapper = false
         phase = .idle
     }
 
@@ -247,6 +257,9 @@ final class DownloadController {
             var newItems: [ActivityItem] = []
             for line in lines {
                 if !needsSignIn, OutputEvent.indicatesSignInProblem(line) { needsSignIn = true }
+                if runWantsLossless, !losslessNeedsWrapper, OutputEvent.indicatesLicenseRefusal(line) {
+                    losslessNeedsWrapper = true
+                }
                 if let e = OutputEvent.parse(line) { newItems.append(ActivityItem(id: items.count + newItems.count, event: e)) }
             }
             if !newItems.isEmpty { items += newItems }

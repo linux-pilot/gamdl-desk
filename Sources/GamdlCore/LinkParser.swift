@@ -38,6 +38,11 @@ public enum LinkParser {
         return candidate
     }
 
+    /// A link straight to a music video (music.apple.com/<storefront>/music-video/<name>/<id>).
+    public static func isMusicVideoLink(_ input: String) -> Bool {
+        URLComponents(string: input)?.path.split(separator: "/").contains("music-video") ?? false
+    }
+
     /// ISRC: 2-letter country, 3 alphanumeric registrant, 7 digits (year + designation).
     static func isISRC(_ s: String) -> Bool {
         let u = Array(s.uppercased().utf8)

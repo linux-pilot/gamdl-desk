@@ -325,3 +325,70 @@ import Testing
         #expect(old.customTemplates.albumFolder == "X" && old.customTemplates.singleDiscFile == "{track:02d} {title}")
     }
 }
+
+@Suite struct CodecTests {
+    @Test func everyCodecHasALabelAndOnlyALACNeedsWrapper() {
+        for codec in DownloadOptions.songCodecs {
+            #expect(DownloadOptions.songCodecLabel(codec) != codec)
+            var o = DownloadOptions()
+            o.songCodec = codec
+            #expect(o.songCodecNeedsWrapper == codec.hasPrefix("alac"))
+            #expect(DownloadOptions.songCodecLabel(codec).contains("Wrapper") == o.songCodecNeedsWrapper)
+        }
+    }
+
+    @Test func detectsLicenseRefusal() {
+        // Exact line from gamdl 4.0.2 when ALAC is requested with cookies sign-in.
+        #expect(OutputEvent.indicatesLicenseRefusal("  ✗ Come Together (2019 Mix): Unable to acquire or process decryption key (DrmLicenseError)"))
+        #expect(!OutputEvent.indicatesLicenseRefusal("✓ Come Together: downloaded"))
+    }
+}
+
+@Suite struct MusicVideoToggleTests {
+    let links = ["https://music.apple.com/us/album/abbey-road/1441164426",
+                 "https://music.apple.com/us/music-video/something/1441164700",
+                 "https://music.apple.com/us/playlist/x/pl.123",
+                 "USUM71703861"]
+
+    @Test func recognisesMusicVideoLinks() {
+        #expect(LinkParser.isMusicVideoLink(links[1]))
+        #expect(!LinkParser.isMusicVideoLink(links[0]))
+        #expect(!LinkParser.isMusicVideoLink("https://music.apple.com/us/album/music-video-hits/1"))
+        #expect(!LinkParser.isMusicVideoLink("USUM71703861"))
+    }
+
+    @Test func onByDefaultEverythingIsSent() {
+        let o = DownloadOptions()
+        #expect(o.downloadMusicVideos)
+        #expect(o.inputsToDownload(links) == (links, 0))
+    }
+
+    @Test func offSkipsVideoLinksAndArtistVideos() {
+        var o = DownloadOptions()
+        o.downloadMusicVideos = false
+        let plan = o.inputsToDownload(links)
+        #expect(plan.inputs == [links[0], links[2], links[3]])
+        #expect(plan.skippedVideos == 1)
+        for choice in ["music-videos", "all"] {
+            o.artistSelection = choice
+            #expect(o.effectiveArtistSelection == "all-albums")
+            let args = o.arguments(inputs: plan.inputs)
+            #expect(args[args.firstIndex(of: "--artist-auto-select")! + 1] == "all-albums")
+        }
+        o.artistSelection = "top-songs"
+        #expect(o.effectiveArtistSelection == "top-songs")
+        #expect(!o.availableArtistSelections.contains { $0.value == "music-videos" || $0.value == "all" })
+        #expect(!o.previewPaths().contains { $0.label == "Music video" })
+        // The saved artist choice comes back when videos are turned on again.
+        o.artistSelection = "all"
+        o.downloadMusicVideos = true
+        #expect(o.effectiveArtistSelection == "all")
+    }
+
+    @Test func persists() {
+        var o = DownloadOptions()
+        o.downloadMusicVideos = false
+        #expect(DownloadOptions(rawValue: o.rawValue)?.downloadMusicVideos == false)
+        #expect(DownloadOptions(rawValue: "{}")?.downloadMusicVideos == true)
+    }
+}

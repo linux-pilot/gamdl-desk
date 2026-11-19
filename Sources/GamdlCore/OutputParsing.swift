@@ -101,6 +101,12 @@ public struct OutputEvent: Equatable, Sendable {
     }
 
     /// gamdl couldn't sign in; the user needs to run `gamdl auth` or pick a cookies file.
+    /// Apple refused a decryption key, e.g. ALAC without gamdl's Wrapper.
+    public static func indicatesLicenseRefusal(_ line: String) -> Bool {
+        let l = line.lowercased()
+        return l.contains("drmlicenseerror") || l.contains("unable to acquire or process decryption key")
+    }
+
     public static func indicatesSignInProblem(_ line: String) -> Bool {
         let l = line.lowercased()
         return l.contains("authentication setup requires an interactive terminal")

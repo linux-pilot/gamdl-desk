@@ -17,6 +17,9 @@ public struct DownloadOptions: Equatable, Sendable {
     public var overwrite = false
     public var artistSelection = "all-albums"
     public var concurrentDownloads = 2
+    /// Off: music-video links are left out and artist links download albums only. gamdl itself can't
+    /// skip videos that are part of an album or playlist, so those still download.
+    public var downloadMusicVideos = true
     public var folderLayout = FolderLayout.artistAlbum
     public var fileNaming = FileNaming.trackTitle
     /// Used for the parts set to Custom (folders, file names, or both).
@@ -29,6 +32,30 @@ public struct DownloadOptions: Equatable, Sendable {
     public static let songCodecs = ["aac", "aac-he", "aac-binaural", "aac-downmix", "aac-he-binaural",
                                     "aac-he-downmix", "aac-web", "aac-he-web", "atmos", "ac3",
                                     "alac", "alac-lossless", "alac-hires"]
+    /// What each codec is, for the picker. Availability still varies by track.
+    public static func songCodecLabel(_ codec: String) -> String {
+        switch codec {
+        case "aac": "AAC 256 kbps"
+        case "aac-he": "HE-AAC 64 kbps"
+        case "aac-binaural": "AAC binaural"
+        case "aac-downmix": "AAC downmix"
+        case "aac-he-binaural": "HE-AAC binaural"
+        case "aac-he-downmix": "HE-AAC downmix"
+        case "aac-web": "AAC (web stream)"
+        case "aac-he-web": "HE-AAC (web stream)"
+        case "atmos": "Dolby Atmos"
+        case "ac3": "Dolby Digital (AC-3)"
+        case "alac": "ALAC, best available (Wrapper)"
+        case "alac-lossless": "ALAC Lossless (Wrapper)"
+        case "alac-hires": "ALAC Hi-Res (Wrapper)"
+        default: codec
+        }
+    }
+
+    /// Apple only grants ALAC keys through gamdl's Wrapper v2 connection; with cookies or a
+    /// media user token every ALAC download fails with a DRM license error (checked with gamdl 4.0.2).
+    public var songCodecNeedsWrapper: Bool { songCodec.hasPrefix("alac") }
+
     public static let lyricsFormats = ["lrc", "enhanced-lrc", "srt", "ttml", "enhanced-ttml", "text"]
     public static let mvCodecs = ["h264", "h265"]
     public static let mvContainers = ["m4v", "mp4"]
@@ -47,6 +74,25 @@ public struct DownloadOptions: Equatable, Sendable {
         ("all", "All albums + music videos"),
     ]
     public static let concurrencyRange = 1...8
+
+    /// Artist choices that make sense with the current music-video setting.
+    public var availableArtistSelections: [(value: String, label: String)] {
+        downloadMusicVideos ? Self.artistSelections
+            : Self.artistSelections.filter { $0.value != "music-videos" && $0.value != "all" }
+    }
+
+    /// The `--artist-auto-select` value actually used: video categories fall back to all albums
+    /// while music videos are off (the saved choice is kept for when they're turned back on).
+    public var effectiveArtistSelection: String {
+        availableArtistSelections.contains { $0.value == artistSelection } ? artistSelection : "all-albums"
+    }
+
+    /// The validated links/ISRCs to send to gamdl, and how many music-video links were left out.
+    public func inputsToDownload(_ valid: [String]) -> (inputs: [String], skippedVideos: Int) {
+        guard !downloadMusicVideos else { return (valid, 0) }
+        let inputs = valid.filter { !LinkParser.isMusicVideoLink($0) }
+        return (inputs, valid.count - inputs.count)
+    }
     public static let nameLengthRange = 40...255
 
     public var expandedOutputDir: String { Self.expand(outputDir) }
@@ -129,8 +175,10 @@ public struct DownloadOptions: Equatable, Sendable {
             "artist": .text("The Beatles"), "title": .text("Something"), "date": .date("1969-10-06"),
             "media_type": .text("Music Video")]
         var paths = [("Song", path(t.albumFolder, t.singleDiscFile, song, ".m4a")),
-                     ("Multi-disc album", path(t.albumFolder, t.multiDiscFile, multi, ".m4a")),
-                     ("Music video", path(t.noAlbumFolder, t.noAlbumFile, video, "." + mvContainer))]
+                     ("Multi-disc album", path(t.albumFolder, t.multiDiscFile, multi, ".m4a"))]
+        if downloadMusicVideos {
+            paths.append(("Music video", path(t.noAlbumFolder, t.noAlbumFile, video, "." + mvContainer)))
+        }
         if savePlaylist {
             let playlist: [String: PathTemplate.Value] = [
                 "playlist_title": .text("Road Trip"), "playlist_artist": .text("Apple Music"), "playlist_track": .number(3)]
@@ -150,7 +198,7 @@ public struct DownloadOptions: Equatable, Sendable {
                  "--music-video-container", mvContainer,
                  "--max-height", String(maxHeight),
                  "--cover-format", coverFormat,
-                 "--artist-auto-select", artistSelection,
+                 "--artist-auto-select", effectiveArtistSelection,
                  "--concurrent-downloads", String(Self.concurrencyRange.clamped(concurrentDownloads)),
                  saveCover ? "--save-cover" : "--no-save-cover",
                  savePlaylist ? "--save-playlist" : "--no-save-playlist",
@@ -174,7 +222,7 @@ extension ClosedRange where Bound == Int {
 extension DownloadOptions: Codable {
     private enum K: String, CodingKey {
         case outputDir, cookiesPath, songCodec, saveLyrics, lyricsFormat, mvCodec, mvContainer, maxHeight,
-             saveCover, coverFormat, savePlaylist, overwrite, artistSelection, concurrentDownloads,
+             saveCover, coverFormat, savePlaylist, overwrite, artistSelection, concurrentDownloads, downloadMusicVideos,
              folderLayout, fileNaming, customTemplates, maxNameLength
     }
 
@@ -200,6 +248,7 @@ extension DownloadOptions: Codable {
         savePlaylist = v(.savePlaylist, d.savePlaylist)
         overwrite = v(.overwrite, d.overwrite)
         artistSelection = pick(.artistSelection, d.artistSelection, in: Self.artistSelections.map(\.value))
+        downloadMusicVideos = v(.downloadMusicVideos, d.downloadMusicVideos)
         concurrentDownloads = Self.concurrencyRange.clamped(v(.concurrentDownloads, d.concurrentDownloads))
         folderLayout = FolderLayout(rawValue: v(.folderLayout, "")) ?? d.folderLayout
         fileNaming = FileNaming(rawValue: v(.fileNaming, "")) ?? d.fileNaming
@@ -223,6 +272,7 @@ extension DownloadOptions: Codable {
         try c.encode(savePlaylist, forKey: .savePlaylist)
         try c.encode(overwrite, forKey: .overwrite)
         try c.encode(artistSelection, forKey: .artistSelection)
+        try c.encode(downloadMusicVideos, forKey: .downloadMusicVideos)
         try c.encode(concurrentDownloads, forKey: .concurrentDownloads)
         try c.encode(folderLayout.rawValue, forKey: .folderLayout)
         try c.encode(fileNaming.rawValue, forKey: .fileNaming)

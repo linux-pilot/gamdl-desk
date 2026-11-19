@@ -16,10 +16,13 @@ struct ContentView: View {
     @State private var signInDismissed = false
 
     private var parsed: LinkParser.Result { LinkParser.parse(input) }
+    /// What will actually be sent to gamdl after applying the music-video setting.
+    private var plan: (inputs: [String], skippedVideos: Int) { options.inputsToDownload(parsed.valid) }
 
     private var blockingReason: String? {
         if controller.gamdlPath == nil { return "gamdl isn't installed." }
         if parsed.valid.isEmpty { return "Paste at least one Apple Music link." }
+        if plan.inputs.isEmpty { return "These are all music-video links, and music videos are turned off in Options." }
         return options.blockingIssue()
     }
 
@@ -77,7 +80,7 @@ struct ContentView: View {
                     Label("Download", systemImage: "arrow.down.circle.fill")
                         .labelStyle(.titleAndIcon)
                 }
-                .help(blockingReason ?? "Download \(parsed.valid.count) item\(parsed.valid.count == 1 ? "" : "s") (⌘↩)")
+                .help(blockingReason ?? "Download \(plan.inputs.count) item\(plan.inputs.count == 1 ? "" : "s") (⌘↩)")
                 .keyboardShortcut(.return, modifiers: .command)
                 .disabled(blockingReason != nil)
             }
@@ -106,6 +109,17 @@ struct ContentView: View {
                    message: "Install it in Terminal with:  \(DownloadController.installCommand)") {
                 Button("Copy Command") { copy(DownloadController.installCommand) }
                 Button("Check Again") { controller.locateGamdl() }
+            }
+        } else if controller.losslessNeedsWrapper {
+            Banner(systemImage: "waveform.badge.exclamationmark", tint: .orange,
+                   title: "Lossless needs gamdl's Wrapper",
+                   message: "Apple refused the decryption key for ALAC. Lossless only works through Wrapper v2; AAC and Dolby Atmos work with your current sign-in.") {
+                Button("Use AAC") {
+                    options.songCodec = "aac"
+                    controller.dismissLosslessNotice()
+                }
+                Button("About Wrapper") { NSWorkspace.shared.open(DownloadController.wrapperURL) }
+                Button("Dismiss") { controller.dismissLosslessNotice() }
             }
         } else if controller.signInFlow == .waiting {
             Banner(systemImage: "terminal", tint: .blue,
@@ -179,11 +193,16 @@ struct ContentView: View {
     }
 
     @ViewBuilder private var linkSummary: some View {
-        let r = parsed
+        let r = parsed, p = plan
         if !r.valid.isEmpty || !r.invalid.isEmpty {
             HStack(spacing: 6) {
-                if !r.valid.isEmpty {
-                    Text("\(r.valid.count) ready").foregroundStyle(.secondary)
+                if !p.inputs.isEmpty {
+                    Text("\(p.inputs.count) ready").foregroundStyle(.secondary)
+                }
+                if p.skippedVideos > 0 {
+                    Text("· \(p.skippedVideos) music video\(p.skippedVideos == 1 ? "" : "s") skipped")
+                        .foregroundStyle(.secondary)
+                        .help("Music videos are turned off in Options.")
                 }
                 if r.duplicates > 0 {
                     Text("· \(r.duplicates) duplicate\(r.duplicates == 1 ? "" : "s") ignored").foregroundStyle(.secondary)
@@ -248,7 +267,7 @@ struct ContentView: View {
 
     private func download() {
         guard blockingReason == nil else { return }
-        controller.start(options: options, inputs: parsed.valid)
+        controller.start(options: options, inputs: plan.inputs)
     }
 
     private func paste() {

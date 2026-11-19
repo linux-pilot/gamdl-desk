@@ -18,6 +18,11 @@ struct OptionsInspector: View {
         return "Sign In with Terminal…"
     }
 
+    /// gamdl will sign in through Wrapper: it's the saved method and no cookies file overrides it.
+    private var usesWrapper: Bool {
+        controller.savedAuth == .mode("wrapper") && options.cookiesPath.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
     var body: some View {
         Form {
             Section {
@@ -47,7 +52,17 @@ struct OptionsInspector: View {
 
             Section("Songs") {
                 Picker("Codec", selection: $options.songCodec) {
-                    ForEach(DownloadOptions.songCodecs, id: \.self) { Text($0) }
+                    ForEach(DownloadOptions.songCodecs, id: \.self) { Text(DownloadOptions.songCodecLabel($0)).tag($0) }
+                }
+                if options.songCodecNeedsWrapper && !usesWrapper {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Label("Lossless only works when gamdl signs in through Wrapper v2. With cookies, Apple refuses the key and every song fails.",
+                              systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Link("How to set up Wrapper v2", destination: DownloadController.wrapperURL)
+                    }
+                    .font(.caption)
                 }
                 Toggle("Save lyrics file", isOn: $options.saveLyrics)
                 Picker("Lyrics format", selection: $options.lyricsFormat) {
@@ -56,21 +71,33 @@ struct OptionsInspector: View {
                 .disabled(!options.saveLyrics)
             }
 
-            Section("Music videos") {
-                Picker("Codec", selection: $options.mvCodec) {
-                    ForEach(DownloadOptions.mvCodecs, id: \.self) { Text($0) }
+            Section {
+                Toggle("Download music videos", isOn: $options.downloadMusicVideos)
+                Group {
+                    Picker("Codec", selection: $options.mvCodec) {
+                        ForEach(DownloadOptions.mvCodecs, id: \.self) { Text($0) }
+                    }
+                    Picker("Container", selection: $options.mvContainer) {
+                        ForEach(DownloadOptions.mvContainers, id: \.self) { Text($0) }
+                    }
+                    Picker("Max height", selection: $options.maxHeight) {
+                        ForEach(DownloadOptions.maxHeights, id: \.self) { Text("\($0)p").tag($0) }
+                    }
                 }
-                Picker("Container", selection: $options.mvContainer) {
-                    ForEach(DownloadOptions.mvContainers, id: \.self) { Text($0) }
-                }
-                Picker("Max height", selection: $options.maxHeight) {
-                    ForEach(DownloadOptions.maxHeights, id: \.self) { Text("\($0)p").tag($0) }
+                .disabled(!options.downloadMusicVideos)
+            } header: {
+                Text("Music videos")
+            } footer: {
+                if !options.downloadMusicVideos {
+                    Footnote("Music-video links are skipped and artist links download albums only. Videos that are part of an album or playlist still download: gamdl has no way to leave them out.")
                 }
             }
 
             Section {
-                Picker("Download", selection: $options.artistSelection) {
-                    ForEach(DownloadOptions.artistSelections, id: \.value) { Text($0.label).tag($0.value) }
+                Picker("Download", selection: Binding(
+                    get: { options.effectiveArtistSelection },
+                    set: { options.artistSelection = $0 })) {
+                    ForEach(options.availableArtistSelections, id: \.value) { Text($0.label).tag($0.value) }
                 }
             } header: {
                 Text("Artist links")
