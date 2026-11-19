@@ -6,11 +6,12 @@
 
 A small native macOS app (SwiftUI) that puts a window around [gamdl](https://github.com/glomatico/gamdl), the Apple Music downloader CLI.
 
-Paste Apple Music links, pick codecs and an output folder, and press **Download** (⌘↩). Each finished song or video shows up in the Activity list, and gamdl's full output is in the Log.
+Paste Apple Music links, pick codecs in Options and an output folder in Settings (⌘,), and press **Download** (⌘↩) under the links. Each finished song or video shows up in the Activity list, and gamdl's full output is in the Log.
 
 ## Features
 
-- **Setup**: checks what gamdl needs and installs what's missing: uv (which also downloads a suitable Python), gamdl itself, and the Apple Music sign-in. It opens by itself when gamdl isn't installed, and is always under Gamdl Desk ▸ Setup…. It also shows whether Lossless (Wrapper) is set up.
+- **Setup**: checks what gamdl needs and installs what's missing: uv (which also downloads a suitable Python), gamdl itself, and the Apple Music sign-in. It opens by itself when gamdl isn't installed, and is always available from the toolbar's Setup button and Gamdl Desk ▸ Setup…. Settings ▸ Updates shows the installed uv and gamdl versions with Check Again. It also shows whether Lossless (Wrapper) is set up.
+- **App updates**: at launch (unless turned off in Settings ▸ Updates) and from Gamdl Desk ▸ Check for Updates…, the app looks at the latest GitHub release. When it's newer, a banner offers **Install and Relaunch**: the app downloads the release's DMG, checks it holds Gamdl Desk at that version, replaces itself and reopens. If the app's folder isn't writable, the DMG opens in Finder instead.
 - **Link checking as you paste**: Apple Music links (album, song, playlist, artist, music video) and ISRC codes are counted. Duplicates are ignored, and anything else is flagged and never passed to gamdl.
 - **Activity list**: shows what was saved, skipped or failed, with Show in Finder for each file. The status bar shows elapsed time and totals.
 - **Fast log**: copy it, save it, or search it with ⌘F. It stays responsive with tens of thousands of lines.
@@ -42,6 +43,14 @@ Paste Apple Music links, pick codecs and an output folder, and press **Download*
 
 This produces `Gamdl Desk.app` next to the script. Drag it to `/Applications`. The app icon is generated from `Assets/logo.png` by `scripts/make-icon.swift`.
 
+### Releasing an update
+
+1. Raise `VERSION` in `build.sh`.
+2. Run `./build.sh --dmg`.
+3. Create a GitHub release tagged `v<VERSION>` (for example `v1.3.0`) and attach `GamdlDesk-<VERSION>.dmg`.
+
+Installed copies compare the tag with their own version and offer the update. The app inside the DMG must have the same bundle identifier and the tagged version, or the update is refused.
+
 ## Test
 
 ```bash
@@ -54,29 +63,33 @@ Covers link parsing, command-line building, settings persistence, gamdl output p
 
 gamdl needs to sign in before it can download. Do one of these:
 
-- Click **Sign In with Terminal…** (in Options, or the banner that appears after a sign-in error). It runs `gamdl auth` in Terminal, which asks a few questions. The app waits for it and confirms when you're signed in, or tells you if it didn't finish.
+- Click **Sign In with Terminal…** (in Settings ▸ Account, or the banner that appears after a sign-in error). It runs `gamdl auth` in Terminal, which asks a few questions. The app waits for it and confirms when you're signed in, or tells you if it didn't finish.
 - Or choose a Netscape `cookies.txt` exported from music.apple.com while signed in (it must contain the `media-user-token` cookie).
 
 ## Lossless (ALAC) and Dolby Atmos
 
 With cookies or a media user token, gamdl can download **AAC** and **Dolby Atmos**. For **ALAC** (Lossless and Hi-Res), Apple refuses the decryption key, and every song fails with `DrmLicenseError` (checked with gamdl 4.0.2). gamdl doesn't fall back to AAC.
 
-Lossless needs gamdl's **Wrapper** sign-in, which talks to a separately running [Wrapper v2](https://github.com/glomatico/wrapper-v2) service. Wrapper v2 runs Apple Music's Android libraries in a Linux Docker container (arm64 works on Apple Silicon); you supply the Apple Music Android APK yourself and build it locally. Once it's running (default `http://127.0.0.1`, decrypt port 10020), click **Sign In Again…** in Options and choose Wrapper in gamdl's sign-in wizard. The Account status then shows "Signed in · wrapper", and ALAC downloads use it.
+Lossless needs gamdl's **Wrapper** sign-in, which talks to a separately running [Wrapper v2](https://github.com/glomatico/wrapper-v2) service. Wrapper v2 runs Apple Music's Android libraries in a Linux Docker container (arm64 works on Apple Silicon); you supply the Apple Music Android APK yourself and build it locally. Once it's running (default `http://127.0.0.1`, decrypt port 10020), click **Sign In Again…** in Settings ▸ Account and choose Wrapper in gamdl's sign-in wizard. The Account status then shows "Signed in · wrapper", and ALAC downloads use it.
 
-## Options
+## Options and Settings
 
-| Section | Settings |
-| --- | --- |
-| Output | output folder |
-| Folders & file names | folder layout, file naming, custom templates, name length limit, live preview |
-| Account | cookies file (optional), sign in with Terminal |
-| Songs | codec (aac, aac-he, alac, atmos, …), lyrics file and its format |
-| Music videos | download music videos on/off, codec (h264/h265), container (m4v/mp4), max height |
-| Artist links | what to download from an artist page |
-| Files | save cover art (jpg/png), save playlist `.m3u`, overwrite existing files |
-| Performance | parallel downloads (1–8) |
+The Options inspector (⌥⌘I) holds what you change per download. Settings (⌘,) holds the rest.
 
-Options → Account shows whether gamdl is signed in (and how). It re-checks whenever you switch back to the app, so a `gamdl auth` you run yourself is picked up too. A saved sign-in can still expire later; a download then reports it and offers to sign in again.
+| Where | Section | Settings |
+| --- | --- | --- |
+| Settings ▸ General | Output | output folder |
+| Settings ▸ General | Performance | parallel downloads (1–8) |
+| Settings ▸ Account | Account | cookies file (optional), sign in with Terminal |
+| Settings ▸ Updates | Requirements | uv and gamdl versions, Check Again, Open Setup… |
+| Settings ▸ Updates | App updates | current version, check now, check at launch on/off |
+| Options | Folders & file names | folder layout, file naming, custom templates, name length limit, live preview |
+| Options | Songs | codec (aac, aac-he, alac, atmos, …), lyrics file and its format |
+| Options | Music videos | download music videos on/off, codec (h264/h265), container (m4v/mp4), max height |
+| Options | Artist links | what to download from an artist page |
+| Options | Files | save cover art (jpg/png), save playlist `.m3u`, overwrite existing files |
+
+Settings ▸ Account shows whether gamdl is signed in (and how). It re-checks whenever you switch back to the app, so a `gamdl auth` you run yourself is picked up too. A saved sign-in can still expire later; a download then reports it and offers to sign in again.
 
 ### Folder layouts
 

@@ -8,15 +8,23 @@ struct GamdlDeskApp: App {
     var body: some Scene {
         // A single window: one gamdl process at a time, and quitting can stop it cleanly.
         Window("Gamdl Desk", id: "main") {
-            ContentView(controller: appDelegate.controller, setup: appDelegate.setup)
+            ContentView(controller: appDelegate.controller, setup: appDelegate.setup, updater: appDelegate.updater)
         }
         .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") { appDelegate.updater.check(userInitiated: true) }
+                    .disabled(appDelegate.updater.isBusy)
+            }
             CommandGroup(after: .appSettings) {
                 Button("Setup…") { appDelegate.setup.isPresented = true }
             }
         }
         .defaultSize(width: 980, height: 680)
         .windowResizability(.contentMinSize)
+
+        Settings {
+            SettingsView(controller: appDelegate.controller, setup: appDelegate.setup, updater: appDelegate.updater)
+        }
     }
 }
 
@@ -24,18 +32,21 @@ struct GamdlDeskApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let controller: DownloadController
     let setup: SetupController
+    let updater: AppUpdater
 
     override init() {
         controller = DownloadController()
         setup = SetupController(downloads: controller)
+        updater = AppUpdater(downloads: controller, setup: setup)
         super.init()
     }
 
-    #if DEBUG
     func applicationDidFinishLaunching(_ notification: Notification) {
-        DebugDriver.install(controller: controller, setup: setup)
+        updater.checkAtLaunch()
+        #if DEBUG
+        DebugDriver.install(controller: controller, setup: setup, updater: updater)
+        #endif
     }
-    #endif
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 

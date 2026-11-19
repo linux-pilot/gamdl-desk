@@ -5,34 +5,36 @@ import AppKit
 /// write commands to that file, then `kill -USR1 <pid>`. One command per line:
 ///   size <w> <h> | input <text, \n for newlines> | lines <fake gamdl output, \n separated>
 ///   download | stop | signin (see `authCommandSignIn`) | refresh | tab activity|log
-///   options on|off | setup on|off | prefs <DownloadOptions JSON> | scroll <y> | dark | light | snap <png path>
+///   options on|off | setup on|off | settings general|account|updates | prefs <DownloadOptions JSON>
+///   update (check, then install) | scroll <y> | dark | light | snap <png path> (the frontmost window)
 /// Snapshots are taken by the app itself, so they need no screen-recording permission.
 @MainActor
 enum DebugDriver {
     static let inputNotification = Notification.Name("DebugDriver.input")
     static let downloadNotification = Notification.Name("DebugDriver.download")
+    static let settingsNotification = Notification.Name("DebugDriver.settings")
     private static var source: DispatchSourceSignal?
 
-    static func install(controller: DownloadController, setup: SetupController) {
+    static func install(controller: DownloadController, setup: SetupController, updater: AppUpdater) {
         guard let path = ProcessInfo.processInfo.environment["GAMDL_DESK_DRIVER"] else { return }
         signal(SIGUSR1, SIG_IGN)
         let s = DispatchSource.makeSignalSource(signal: SIGUSR1, queue: .main)
         s.setEventHandler {
             MainActor.assumeIsolated {
                 let text = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
-                run(text.split(separator: "\n").map(String.init), controller: controller, setup: setup)
+                run(text.split(separator: "\n").map(String.init), controller: controller, setup: setup, updater: updater)
             }
         }
         s.resume()
         source = s
     }
 
-    private static func run(_ commands: [String], controller: DownloadController, setup: SetupController) {
+    private static func run(_ commands: [String], controller: DownloadController, setup: SetupController, updater: AppUpdater) {
         guard let command = commands.first else { return }
         let rest = Array(commands.dropFirst())
         let parts = command.split(separator: " ", maxSplits: 1).map(String.init)
         let arg = parts.count > 1 ? parts[1] : ""
-        let window = NSApp.windows.first { $0.isVisible && $0.contentView != nil }
+        let window = NSApp.orderedWindows.first { $0.isVisible && $0.contentView != nil }
         var delay = 0.4
         switch parts.first ?? "" {
         case "size":
@@ -48,6 +50,11 @@ enum DebugDriver {
         case "lines": controller.debugInject(arg.components(separatedBy: "\\n"))
         case "tab": UserDefaults.standard.set((arg == "log" ? ResultsTab.log : .activity).rawValue, forKey: SettingsKey.resultsTab)
         case "setup": setup.isPresented = arg == "on"
+        case "settings":
+            UserDefaults.standard.set(arg, forKey: SettingsKey.settingsTab)
+            NotificationCenter.default.post(name: settingsNotification, object: nil)
+        case "update": // check, or install the update found by the last check
+            if case .available(let release) = updater.state { updater.install(release) } else { updater.check(userInitiated: true) }
         case "options": UserDefaults.standard.set(arg == "on", forKey: SettingsKey.showOptions)
         case "scroll": // scroll the rightmost scroll view (the Options inspector) to y points from the top
             if let root = window?.contentView {
@@ -73,7 +80,7 @@ enum DebugDriver {
         default: break
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-            MainActor.assumeIsolated { run(rest, controller: controller, setup: setup) }
+            MainActor.assumeIsolated { run(rest, controller: controller, setup: setup, updater: updater) }
         }
     }
 

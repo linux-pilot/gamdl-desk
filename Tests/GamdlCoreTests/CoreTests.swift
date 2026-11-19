@@ -417,4 +417,13 @@ import Testing
         #expect(ToolVersion.major("12.1") == 12)
         #expect(ToolVersion.major("") == nil)
     }
+
+    @Test func comparesVersions() {
+        #expect(ToolVersion.isNewer("v1.3.0", than: "1.2.0"))
+        #expect(ToolVersion.isNewer("1.10", than: "1.9.9"))
+        #expect(ToolVersion.isNewer("2", than: "1.99"))
+        #expect(!ToolVersion.isNewer("1.2", than: "1.2.0"))
+        #expect(!ToolVersion.isNewer("v1.2.0", than: "1.2.1"))
+        #expect(!ToolVersion.isNewer("latest", than: "1.0"))
+    }
 }

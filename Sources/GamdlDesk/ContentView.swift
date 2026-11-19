@@ -10,16 +10,21 @@ enum SettingsKey {
     static let downloadOptions = "downloadOptions"
     static let showOptions = "showOptions"
     static let resultsTab = "resultsTab"
+    static let settingsTab = "settingsTab"
 }
 
 struct ContentView: View {
     let controller: DownloadController
     @Bindable var setup: SetupController
+    let updater: AppUpdater
 
     @AppStorage(SettingsKey.downloadOptions) private var options = DownloadOptions()
     @AppStorage(SettingsKey.showOptions) private var showOptions = true
     @AppStorage(SettingsKey.resultsTab) private var tab = ResultsTab.activity
     @State private var input = ""
+    #if DEBUG
+    @Environment(\.openSettings) private var openSettings
+    #endif
 
     private var parsed: LinkParser.Result { LinkParser.parse(input) }
     private var plan: (inputs: [String], skippedVideos: Int) { options.inputsToDownload(parsed.valid) }
@@ -39,7 +44,7 @@ struct ContentView: View {
             GeometryReader { geo in
                 VStack(spacing: 0) {
                     linksSection
-                        .frame(height: min(max(geo.size.height * 0.32, 130), 280))
+                        .frame(height: min(max(geo.size.height * 0.36, 170), 320))
                     Divider()
                     resultsSection
                 }
@@ -56,6 +61,7 @@ struct ContentView: View {
         #if DEBUG
         .onReceive(NotificationCenter.default.publisher(for: DebugDriver.inputNotification)) { input = $0.object as? String ?? "" }
         .onReceive(NotificationCenter.default.publisher(for: DebugDriver.downloadNotification)) { _ in download() }
+        .onReceive(NotificationCenter.default.publisher(for: DebugDriver.settingsNotification)) { _ in openSettings() }
         #endif
     }
 
@@ -71,25 +77,17 @@ struct ContentView: View {
             .help("Open the output folder in Finder (⇧⌘O)")
             .keyboardShortcut("o", modifiers: [.command, .shift])
 
-            if controller.isRunning {
-                Button {
-                    controller.stop()
-                } label: {
-                    Label("Stop", systemImage: "stop.circle.fill")
-                        .labelStyle(.titleAndIcon)
-                }
-                .help("Stop the download (⌘.)")
-                .keyboardShortcut(".", modifiers: .command)
-                .disabled(controller.phase.isStopping)
-            } else {
-                Button(action: download) {
-                    Label("Download", systemImage: "arrow.down.circle.fill")
-                        .labelStyle(.titleAndIcon)
-                }
-                .help(blockingReason ?? "Download \(plan.inputs.count) item\(plan.inputs.count == 1 ? "" : "s") (⌘↩)")
-                .keyboardShortcut(.return, modifiers: .command)
-                .disabled(blockingReason != nil)
+            Button {
+                setup.isPresented = true
+            } label: {
+                Label("Setup", systemImage: "wrench.and.screwdriver")
             }
+            .help("Check and install what gamdl needs")
+
+            SettingsLink {
+                Label("Settings", systemImage: "gearshape")
+            }
+            .help("Output folder, account, performance and updates (⌘,)")
 
             Button {
                 withAnimation { showOptions.toggle() }
@@ -146,10 +144,50 @@ struct ContentView: View {
         } else if controller.showsBanner(for: .signInRejected) {
             Banner(systemImage: "person.crop.circle.badge.exclamationmark", tint: .blue,
                    title: "gamdl needs to sign in to Apple Music",
-                   message: "Sign in once in Terminal, or choose a cookies.txt exported from music.apple.com in Options.") {
+                   message: "Sign in once in Terminal, or choose a cookies.txt exported from music.apple.com in Settings ▸ Account.") {
                 Button("Sign In with Terminal…") { controller.signInInTerminal() }
                 Button("Dismiss") { controller.dismiss(.signInRejected) }
             }
+        } else if updater.showsBanner {
+            updateBanner
+        }
+    }
+
+    @ViewBuilder private var updateBanner: some View {
+        let hide = { updater.showsBanner = false }
+        switch updater.state {
+        case .available(let release):
+            Banner(systemImage: "arrow.down.circle.fill", tint: .blue,
+                   title: "Gamdl Desk \(release.version) is available",
+                   message: updater.installBlockingReason
+                       ?? "You have \(updater.currentVersion ?? "an older version"). Installing replaces the app and reopens it.") {
+                Button("Install and Relaunch") { updater.install(release) }
+                    .disabled(updater.installBlockingReason != nil)
+                Button("What's New") { NSWorkspace.shared.open(release.pageURL) }
+                Button("Later", action: hide)
+            }
+        case .installing(let release):
+            Banner(systemImage: "arrow.down.circle", tint: .blue,
+                   title: "Installing Gamdl Desk \(release.version)…",
+                   message: "Gamdl Desk reopens by itself when it's done.", showsProgress: true) {}
+        case .checking:
+            Banner(systemImage: "arrow.triangle.2.circlepath", tint: .blue,
+                   title: "Checking for updates…", message: "Looking at the latest release on GitHub.",
+                   showsProgress: true) {}
+        case .upToDate:
+            Banner(systemImage: "checkmark.circle.fill", tint: .green,
+                   title: "Gamdl Desk is up to date",
+                   message: "You have the latest version (\(updater.currentVersion ?? "")).") {
+                Button("OK", action: hide)
+            }
+        case .failed(let reason):
+            Banner(systemImage: "exclamationmark.triangle.fill", tint: .orange,
+                   title: "Update didn't work", message: reason) {
+                Button("Open Releases") { NSWorkspace.shared.open(AppUpdater.releasesURL) }
+                Button("Dismiss", action: hide)
+            }
+        case .idle:
+            EmptyView()
         }
     }
 
@@ -191,8 +229,47 @@ struct ContentView: View {
             }
             .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.separator))
+
+            downloadRow
         }
         .padding(12)
+    }
+
+    private var downloadRow: some View {
+        HStack(spacing: 8) {
+            if !controller.isRunning, let reason = blockingReason {
+                Text(reason)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .help(reason)
+            }
+            Spacer(minLength: 8)
+            if controller.isRunning {
+                Button(role: .cancel) {
+                    controller.stop()
+                } label: {
+                    Label(controller.phase.isStopping ? "Stopping…" : "Stop", systemImage: "stop.circle.fill")
+                        .frame(minWidth: 96)
+                }
+                .help("Stop the download (⌘.)")
+                .keyboardShortcut(".", modifiers: .command)
+                .disabled(controller.phase.isStopping)
+            } else {
+                Button(action: download) {
+                    Label(plan.inputs.count > 1 ? "Download \(plan.inputs.count)" : "Download",
+                          systemImage: "arrow.down.circle.fill")
+                        .frame(minWidth: 96)
+                }
+                .buttonStyle(.borderedProminent)
+                .help(blockingReason ?? "Download \(plan.inputs.count) item\(plan.inputs.count == 1 ? "" : "s") (⌘↩)")
+                .keyboardShortcut(.return, modifiers: .command)
+                .disabled(blockingReason != nil)
+            }
+        }
+        .labelStyle(.titleAndIcon)
+        .controlSize(.large)
     }
 
     @ViewBuilder private var linkSummary: some View {

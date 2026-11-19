@@ -2,43 +2,15 @@ import AppKit
 import GamdlCore
 import SwiftUI
 
-/// Download settings, shown in the window's trailing inspector. Changes apply to the next download.
+/// Per-download options, shown in the window's trailing inspector. Changes apply to the next download.
+/// The output folder, sign-in and parallel downloads are in Settings (⌘,).
 struct OptionsInspector: View {
     @Binding var options: DownloadOptions
     let controller: DownloadController
 
-    private var signInButtonTitle: String {
-        if controller.signInFlow == .waiting { return "Waiting for Terminal…" }
-        if case .mode = controller.savedAuth, !controller.issues.contains(.signInRejected) { return "Sign In Again…" }
-        return "Sign In with Terminal…"
-    }
-
     var body: some View {
         Form {
-            Section {
-                PathField(title: "Output folder", path: $options.outputDir, directory: true)
-            } header: {
-                Text("Output")
-            }
-
             FolderLayoutSection(options: $options)
-
-            Section {
-                SignInStatus(controller: controller, usesCookiesFile: options.cookiesFile != nil)
-                PathField(title: "Cookies file", path: $options.cookiesPath, directory: false,
-                          placeholder: "Optional", allowsClear: true)
-                if options.cookiesFileIsMissing() {
-                    Label("This file doesn't exist.", systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.red)
-                        .font(.caption)
-                }
-                Button(signInButtonTitle) { controller.signInInTerminal() }
-                    .disabled(controller.gamdlPath == nil || controller.signInFlow == .waiting)
-            } header: {
-                Text("Account")
-            } footer: {
-                Footnote("Leave the cookies file empty to use the sign-in saved by `gamdl auth`. A cookies.txt must be exported from music.apple.com while signed in.")
-            }
 
             Section("Songs") {
                 Picker("Codec", selection: $options.songCodec) {
@@ -105,16 +77,9 @@ struct OptionsInspector: View {
             }
 
             Section {
-                Stepper(value: $options.concurrentDownloads, in: DownloadOptions.concurrencyRange) {
-                    LabeledContent("Parallel downloads", value: "\(options.concurrentDownloads)")
-                }
-            } header: {
-                Text("Performance")
-            }
-
-            Section {
                 HStack {
                     Button("Reset to Defaults") { options = DownloadOptions() }
+                        .help("Resets every download option, including the ones in Settings")
                     Spacer()
                     let config = Gamdl.configPath
                     if FileManager.default.fileExists(atPath: config) {
