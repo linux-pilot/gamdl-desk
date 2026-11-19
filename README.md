@@ -14,6 +14,7 @@ Paste Apple Music links, pick codecs and an output folder, and press **Download*
 - **Activity list**: shows what was saved, skipped or failed, with Show in Finder for each file. The status bar shows elapsed time and totals.
 - **Fast log**: copy it, save it, or search it with ⌘F. It stays responsive with tens of thousands of lines.
 - **Sign-in help**: shows whether gamdl is signed in. If it can't sign in, a banner offers to run `gamdl auth` in Terminal and confirms when it worked. You can also point the app at a `cookies.txt`.
+- **Folders & file names**: choose how downloads are arranged: Artist / Album, Artist / Year - Album, Artist - Album, Album, Artist, or no folders at all. File names can be "01 Title", "Title", "Artist - Title" or "01 Artist - Title". Custom mode lets you write gamdl templates yourself. A live preview shows example paths, and invalid templates are flagged before you download.
 - **Artist links**: choose what an artist link downloads (all albums, singles, top songs, music videos, …) instead of hitting gamdl's interactive menu.
 - **Safe stopping**: Stop (⌘.) escalates from interrupt to terminate to kill if gamdl doesn't exit. Quitting during a download asks first and stops gamdl, so it isn't left running.
 - **Adapts to window size**: works from a compact 520 pt window up to full screen. The Options inspector can be hidden (⌥⌘I), and it follows light and dark mode.
@@ -58,6 +59,7 @@ gamdl needs to sign in before it can download. Do one of these:
 | Section | Settings |
 | --- | --- |
 | Output | output folder |
+| Folders & file names | folder layout, file naming, custom templates, name length limit, live preview |
 | Account | cookies file (optional), sign in with Terminal |
 | Songs | codec (aac, aac-he, alac, atmos, …), lyrics file and its format |
 | Music videos | codec (h264/h265), container (m4v/mp4), max height |
@@ -67,13 +69,19 @@ gamdl needs to sign in before it can download. Do one of these:
 
 Options → Account shows whether gamdl is signed in (and how). It re-checks whenever you switch back to the app, so a `gamdl auth` you run yourself is picked up too. A saved sign-in can still expire later; a download then reports it and offers to sign in again.
 
+### Folder layouts
+
+gamdl saves each file at `output folder / folder template / file template`. The presets set gamdl's eight `--…-template` options (album, compilation, no-album and playlist folders and file names). **No folders** saves everything directly in the output folder. gamdl always needs at least one folder level, so the app passes the output folder's parent as `--output-dir` and the folder's own name as the folder template. For that reason the output folder's name can't contain characters gamdl would replace (`: / \ ? * < > | "`), and can't start or end with a dot.
+
+In **Custom** mode, templates use gamdl's fields, such as `{album_artist}`, `{album}`, `{artist}`, `{title}`, `{track:02d}`, `{disc}`, `{date:%Y}`, `{composer}` and `{playlist_title}`, with `/` for subfolders. The full list is under "Template fields" in the app. The preview renders paths the way gamdl does; the tests compare it against gamdl's own formatter output.
+
 Settings are remembered between launches. Anything not exposed here can be set in gamdl's own config at `~/.gamdl/config.yml`.
 
 ## Project layout
 
 | Path | What |
 | --- | --- |
-| `Sources/GamdlCore` | Testable logic: options → command line, link parsing, output parsing, process runner |
+| `Sources/GamdlCore` | Testable logic: options → command line, path templates and preview, link parsing, output parsing, process runner |
 | `Sources/GamdlDesk` | The SwiftUI app |
 | `Tests/GamdlCoreTests` | Swift Testing suite |
 | `scripts/make-icon.swift` | Builds `AppIcon.icns` from the logo |

@@ -51,7 +51,16 @@ import Testing
                          "--song-codec", "aac", "--music-video-codec", "h264", "--music-video-container", "m4v",
                          "--max-height", "1080", "--cover-format", "jpg", "--artist-auto-select", "all-albums",
                          "--concurrent-downloads", "2", "--no-save-cover", "--no-save-playlist", "--no-overwrite",
-                         "--lyrics-file-format", "lrc", "--", "https://music.apple.com/us/album/a/1"])
+                         "--lyrics-file-format", "lrc",
+                         "--album-folder-template", "{album_artist}/{album}",
+                         "--compilation-folder-template", "Compilations/{album}",
+                         "--no-album-folder-template", "{artist}/Unknown Album",
+                         "--playlist-folder-template", "Playlists/{playlist_artist}",
+                         "--single-disc-file-template", "{track:02d} {title}",
+                         "--multi-disc-file-template", "{disc}-{track:02d} {title}",
+                         "--no-album-file-template", "{title}",
+                         "--playlist-file-template", "{playlist_title}",
+                         "--", "https://music.apple.com/us/album/a/1"])
     }
 
     @Test func customArgumentsExpandTildeAndAddCookies() {
@@ -180,5 +189,139 @@ import Testing
     @Test func unreadableOutputIsNil() {
         #expect(SavedAuth.parse(configShow: "Gamdl 4.0.2\n\nError: invalid config") == nil)
         #expect(SavedAuth.parse(configShow: "download:\n  mode: cookies\n") == nil)
+    }
+}
+
+/// Expected paths come from gamdl 4.0.2's own PathFormatter (gamdl/download/paths.py) rendering the
+/// same templates and tags, so the app's preview and validation match what gamdl does.
+@Suite struct PathTemplateTests {
+    func options(_ layout: FolderLayout, _ naming: FileNaming, dir: String = "/OUT",
+                 custom: PathTemplates = PathTemplates(), truncate: Int = 0) -> DownloadOptions {
+        var o = DownloadOptions()
+        o.outputDir = dir
+        o.folderLayout = layout
+        o.fileNaming = naming
+        o.customTemplates = custom
+        o.maxNameLength = truncate
+        o.savePlaylist = true
+        return o
+    }
+
+    func preview(_ o: DownloadOptions) -> [String] { o.previewPaths().map(\.path) }
+
+    @Test func defaultMatchesGamdlDefaults() {
+        let o = options(.artistAlbum, .trackTitle)
+        #expect(o.resolvedPaths.templates == PathTemplates())
+        #expect(preview(o) == ["/OUT/The Beatles/Abbey Road/01 Come Together.m4a",
+                               "/OUT/The Beatles/The Beatles (White Album)/2-01 Birthday.m4a",
+                               "/OUT/The Beatles/Unknown Album/Something.m4v",
+                               "/OUT/Playlists/Apple Music/Road Trip.m3u8"])
+    }
+
+    @Test func presets() {
+        #expect(preview(options(.artistYearAlbum, .trackTitle)).prefix(2) == [
+            "/OUT/The Beatles/1969 - Abbey Road/01 Come Together.m4a",
+            "/OUT/The Beatles/1968 - The Beatles (White Album)/2-01 Birthday.m4a"])
+        #expect(preview(options(.artistDashAlbum, .artistTitle)) == [
+            "/OUT/The Beatles - Abbey Road/The Beatles - Come Together.m4a",
+            "/OUT/The Beatles - The Beatles (White Album)/The Beatles - Birthday.m4a",
+            "/OUT/The Beatles - Unknown Album/The Beatles - Something.m4v",
+            "/OUT/Playlists/Apple Music/Road Trip.m3u8"])
+        #expect(preview(options(.albumOnly, .trackArtistTitle)).prefix(3) == [
+            "/OUT/Abbey Road/01 The Beatles - Come Together.m4a",
+            "/OUT/The Beatles (White Album)/2-01 The Beatles - Birthday.m4a",
+            "/OUT/Unknown Album/The Beatles - Something.m4v"])
+    }
+
+    @Test func flatPutsEverythingInTheOutputFolder() {
+        let o = options(.flat, .trackTitle, dir: "/OUT/gamdl")
+        #expect(preview(o) == ["/OUT/gamdl/01 Come Together.m4a", "/OUT/gamdl/2-01 Birthday.m4a",
+                               "/OUT/gamdl/Something.m4v", "/OUT/gamdl/Road Trip.m3u8"])
+        let args = o.arguments(inputs: ["x"])
+        let i = args.firstIndex(of: "--output-dir")!
+        #expect(args[i + 1] == "/OUT")
+        #expect(args[args.firstIndex(of: "--album-folder-template")! + 1] == "gamdl")
+        #expect(o.pathIssue == nil)
+        // Braces in the folder name are escaped so gamdl renders them literally.
+        #expect(options(.flat, .title, dir: "/OUT/my {music}").resolvedPaths.templates.albumFolder == "my {{music}}")
+    }
+
+    @Test func flatRejectsFolderNamesGamdlWouldChange() {
+        #expect(options(.flat, .title, dir: "/").pathIssue != nil)
+        #expect(options(.flat, .title, dir: "/OUT/.hidden").pathIssue != nil)
+        #expect(options(.flat, .title, dir: "/OUT/a:b").pathIssue != nil)
+        #expect(options(.flat, .title, dir: "/OUT/" + String(repeating: "x", count: 60), truncate: 40).pathIssue != nil)
+        #expect(options(.flat, .title, dir: "~/Music/gamdl").pathIssue == nil)
+    }
+
+    @Test func customTemplatesWithFormatSpecs() {
+        var c = PathTemplates()
+        c.albumFolder = "{album_artist:.3}/{date:%y-%m}"
+        c.singleDiscFile = "{track:3} {title} [{track_total}] {composer}"
+        c.multiDiscFile = "{disc:02d}.{track} {title:>5}"
+        #expect(preview(options(.custom, .custom, custom: c)) == [
+            "/OUT/The/69-09/1 Come Together [17] John Lennon.m4a",
+            "/OUT/The/68-11/02.1 Birthday.m4a",
+            "/OUT/The Beatles/Unknown Album/Something.m4v",
+            "/OUT/Playlists/Apple Music/Road Trip.m3u8"])
+    }
+
+    @Test func cleansNamesLikeGamdl() {
+        var c = PathTemplates()
+        c.albumFolder = ".hidden/A: B {{x}}"
+        c.singleDiscFile = "{title}."
+        #expect(preview(options(.custom, .custom, custom: c)).prefix(2) == [
+            "/OUT/_hidden/A_ B {x}/Come Together_.m4a", "/OUT/_hidden/A_ B {x}/2-01 Birthday.m4a"])
+    }
+
+    @Test func truncatesNamesIncludingExtension() {
+        var c = PathTemplates()
+        c.singleDiscFile = "{track:02d} {title} {title} {title}"
+        let o = options(.artistAlbum, .custom, custom: c, truncate: 40)
+        #expect(o.arguments(inputs: []).contains("--truncate"))
+        // gamdl with --truncate 20 gave these; 20 is below the app's minimum of 40, so render directly.
+        #expect(PathTemplate.render(c.singleDiscFile, values: ["track": .number(1), "title": .text("Come Together")],
+                                    fileExtension: ".m4a", truncate: 20) == ["01 Come Together.m4a"])
+        #expect(PathTemplate.render("{album}", values: ["album": .text("The Beatles (White Album)")], truncate: 20)
+                == ["The Beatles (White A"])
+    }
+
+    @Test func rejectsTemplatesGamdlRejects() {
+        #expect(PathTemplate.problem(in: "{foo}") != nil)          // unknown field
+        #expect(PathTemplate.problem(in: "{album}//x") != nil)     // empty component
+        #expect(PathTemplate.problem(in: "{title!r}") != nil)      // conversion
+        #expect(PathTemplate.problem(in: "{album") != nil)
+        #expect(PathTemplate.problem(in: "a}b") != nil)
+        #expect(PathTemplate.problem(in: "{}") != nil)
+        #expect(PathTemplate.problem(in: "{album:{x}}") != nil)
+        #expect(PathTemplate.problem(in: "/abs/{album}") != nil)
+        #expect(PathTemplate.problem(in: "") != nil)
+        #expect(PathTemplate.problem(in: "{album_artist}/{date:%Y} - {album} {{live}}") == nil)
+        var c = PathTemplates()
+        c.multiDiscFile = "{disc}-{nope}"
+        #expect(options(.artistAlbum, .custom, custom: c).pathIssue == "Multi-disc file template: {nope} isn't a field gamdl knows.")
+        // A broken custom folder template doesn't matter while a preset is selected for folders.
+        c = PathTemplates(); c.albumFolder = "{bad}"
+        #expect(options(.artistAlbum, .trackTitle, custom: c).pathIssue == nil)
+    }
+
+    @Test func templatesAreAlwaysPassedToGamdl() {
+        let args = DownloadOptions().arguments(inputs: ["x"])
+        for flag in PathTemplates().arguments where flag.hasPrefix("--") { #expect(args.contains(flag)) }
+        #expect(!args.contains("--truncate"))
+        #expect(args.last == "x" && args[args.count - 2] == "--")
+    }
+
+    @Test func persistsLayoutChoices() {
+        var o = DownloadOptions()
+        o.folderLayout = .custom
+        o.fileNaming = .artistTitle
+        o.customTemplates.albumFolder = "{artist}/{album}"
+        o.maxNameLength = 120
+        #expect(DownloadOptions(rawValue: o.rawValue) == o)
+        let old = DownloadOptions(rawValue: #"{"folderLayout":"bogus","maxNameLength":7,"customTemplates":{"albumFolder":"X"}}"#)!
+        #expect(old.folderLayout == .artistAlbum)
+        #expect(old.maxNameLength == 40)
+        #expect(old.customTemplates.albumFolder == "X" && old.customTemplates.singleDiscFile == "{track:02d} {title}")
     }
 }

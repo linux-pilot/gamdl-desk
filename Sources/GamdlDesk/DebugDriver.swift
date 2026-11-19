@@ -5,7 +5,7 @@ import AppKit
 /// write commands to that file, then `kill -USR1 <pid>`. One command per line:
 ///   size <w> <h> | input <text, \n for newlines> | lines <fake gamdl output, \n separated>
 ///   download | stop | signin | refresh | tab activity|log
-///   options on|off | dark | light | snap <png path>
+///   options on|off | prefs <DownloadOptions JSON> | scroll <y> | dark | light | snap <png path>
 /// Snapshots are taken by the app itself, so they need no screen-recording permission.
 @MainActor
 enum DebugDriver {
@@ -44,9 +44,18 @@ enum DebugDriver {
         case "stop": controller.stop()
         case "signin": controller.signInInTerminal() // runs GAMDL_DESK_AUTH_COMMAND instead of Terminal
         case "refresh": controller.refreshAuthStatus()
+        case "prefs": UserDefaults.standard.set(arg, forKey: "downloadOptions") // DownloadOptions JSON
         case "lines": controller.debugInject(arg.components(separatedBy: "\\n"))
         case "tab": UserDefaults.standard.set(arg == "log" ? "Log" : "Activity", forKey: "resultsTab")
         case "options": UserDefaults.standard.set(arg == "on", forKey: "showOptions")
+        case "scroll": // scroll the rightmost scroll view (the Options inspector) to y points from the top
+            if let root = window?.contentView {
+                func all(_ v: NSView) -> [NSScrollView] { (v as? NSScrollView).map { [$0] } ?? [] + v.subviews.flatMap(all) }
+                if let sv = all(root).max(by: { $0.convert($0.bounds, to: nil).minX < $1.convert($1.bounds, to: nil).minX }) {
+                    sv.contentView.scroll(to: NSPoint(x: 0, y: Double(arg) ?? 0))
+                    sv.reflectScrolledClipView(sv.contentView)
+                }
+            }
         case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
         case "light": NSApp.appearance = NSAppearance(named: .aqua)
         case "wait": delay = Double(arg) ?? 1

@@ -26,6 +26,8 @@ struct OptionsInspector: View {
                 Text("Output")
             }
 
+            FolderLayoutSection(options: $options)
+
             Section {
                 SignInStatus(controller: controller, usesCookiesFile: !options.cookiesPath.trimmingCharacters(in: .whitespaces).isEmpty)
                 PathField(title: "Cookies file", path: $options.cookiesPath, directory: false,
@@ -209,6 +211,140 @@ struct SignInStatus: View {
             case nil:
                 Label(controller.checkingAuth ? "Checking sign-in…" : "Sign-in status unknown",
                       systemImage: "questionmark.circle").foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+/// Folder layout, file naming and name length, with a live preview of where files will go.
+struct FolderLayoutSection: View {
+    @Binding var options: DownloadOptions
+    @State private var showFields = false
+
+    var body: some View {
+        Section {
+            Picker("Folders", selection: $options.folderLayout) {
+                ForEach(FolderLayout.allCases.filter { $0 != .custom }, id: \.self) { Text($0.label).tag($0) }
+                Divider()
+                Text(FolderLayout.custom.label).tag(FolderLayout.custom)
+            }
+            if options.folderLayout == .custom {
+                TemplateField(title: "Album folder", text: $options.customTemplates.albumFolder)
+                TemplateField(title: "Compilation folder", text: $options.customTemplates.compilationFolder)
+                TemplateField(title: "Songs without an album, and videos", text: $options.customTemplates.noAlbumFolder)
+                TemplateField(title: "Playlist file folder", text: $options.customTemplates.playlistFolder)
+            }
+
+            Picker("File names", selection: $options.fileNaming) {
+                ForEach(FileNaming.allCases.filter { $0 != .custom }, id: \.self) { Text($0.label).tag($0) }
+                Divider()
+                Text(FileNaming.custom.label).tag(FileNaming.custom)
+            }
+            if options.fileNaming == .custom {
+                TemplateField(title: "Album track", text: $options.customTemplates.singleDiscFile)
+                TemplateField(title: "Track on a multi-disc album", text: $options.customTemplates.multiDiscFile)
+                TemplateField(title: "Song without an album, or video", text: $options.customTemplates.noAlbumFile)
+                TemplateField(title: "Playlist file", text: $options.customTemplates.playlistFile)
+            }
+
+            Toggle("Limit name length", isOn: Binding(
+                get: { options.maxNameLength > 0 },
+                set: { options.maxNameLength = $0 ? 120 : 0 }))
+            if options.maxNameLength > 0 {
+                Stepper(value: $options.maxNameLength, in: DownloadOptions.nameLengthRange, step: 10) {
+                    LabeledContent("Longest name", value: "\(options.maxNameLength) bytes")
+                }
+            }
+
+            preview
+        } header: {
+            Text("Folders & file names")
+        } footer: {
+            VStack(alignment: .leading, spacing: 6) {
+                if options.folderLayout == .custom || options.fileNaming == .custom {
+                    DisclosureGroup("Template fields", isExpanded: $showFields) {
+                        Footnote(LocalizedStringKey(Self.fieldHelp))
+                            .textSelection(.enabled)
+                    }
+                    .font(.caption)
+                }
+                Footnote(options.folderLayout == .flat
+                    ? "Everything is saved directly in the output folder."
+                    : "Use / in a template to make subfolders.")
+            }
+        }
+        .onChange(of: options.folderLayout) { old, new in
+            // Start a custom layout from the preset that was selected, so it's easy to tweak,
+            // unless there are custom folder templates already (never overwrite your edits).
+            let d = PathTemplates(), c = options.customTemplates
+            let untouched = (c.albumFolder, c.compilationFolder, c.noAlbumFolder) == (d.albumFolder, d.compilationFolder, d.noAlbumFolder)
+            if new == .custom, untouched, let f = old.folders {
+                (options.customTemplates.albumFolder, options.customTemplates.compilationFolder,
+                 options.customTemplates.noAlbumFolder) = f
+            }
+        }
+        .onChange(of: options.fileNaming) { old, new in
+            let d = PathTemplates(), c = options.customTemplates
+            let untouched = (c.singleDiscFile, c.multiDiscFile, c.noAlbumFile) == (d.singleDiscFile, d.multiDiscFile, d.noAlbumFile)
+            if new == .custom, untouched, let f = old.files {
+                (options.customTemplates.singleDiscFile, options.customTemplates.multiDiscFile,
+                 options.customTemplates.noAlbumFile) = f
+            }
+        }
+    }
+
+    @ViewBuilder private var preview: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Preview").font(.subheadline.weight(.semibold))
+            if let issue = options.pathIssue {
+                Label(issue, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red)
+                    .font(.caption)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                ForEach(options.previewPaths(), id: \.label) { item in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.label).font(.caption).foregroundStyle(.secondary)
+                        Text(item.path)
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 2)
+        .accessibilityElement(children: .combine)
+    }
+
+    static let fieldHelp = """
+    `{album}` `{album_artist}` `{artist}` `{title}` `{composer}` `{date}` `{track}` `{track_total}` \
+    `{disc}` `{disc_total}` `{media_type}` `{playlist_title}` `{playlist_artist}` `{playlist_track}` \
+    `{album_id}` `{artist_id}` `{title_id}` `{composer_id}` `{playlist_id}`
+
+    Formats: `{track:02d}` → 01, `{date:%Y}` → 1969, `{title:.30}` → first 30 characters. \
+    Write `{{` or `}}` for a literal brace. Characters like : and / inside values become _.
+    """
+}
+
+/// A monospaced template field that shows what's wrong with the template, if anything.
+struct TemplateField: View {
+    let title: String
+    @Binding var text: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+            TextField(title, text: $text)
+                .labelsHidden()
+                .textFieldStyle(.roundedBorder)
+                .font(.system(.body, design: .monospaced))
+                .autocorrectionDisabled()
+            if let problem = PathTemplate.problem(in: text) {
+                Label(problem, systemImage: "exclamationmark.circle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }

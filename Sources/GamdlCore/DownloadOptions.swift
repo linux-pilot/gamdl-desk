@@ -17,6 +17,12 @@ public struct DownloadOptions: Equatable, Sendable {
     public var overwrite = false
     public var artistSelection = "all-albums"
     public var concurrentDownloads = 2
+    public var folderLayout = FolderLayout.artistAlbum
+    public var fileNaming = FileNaming.trackTitle
+    /// Used for the parts set to Custom (folders, file names, or both).
+    public var customTemplates = PathTemplates()
+    /// gamdl's `--truncate`: longest folder or file name in bytes; 0 means no limit beyond gamdl's 255.
+    public var maxNameLength = 0
 
     public init() {}
 
@@ -41,6 +47,7 @@ public struct DownloadOptions: Equatable, Sendable {
         ("all", "All albums + music videos"),
     ]
     public static let concurrencyRange = 1...8
+    public static let nameLengthRange = 40...255
 
     public var expandedOutputDir: String { Self.expand(outputDir) }
     public var expandedCookiesPath: String { Self.expand(cookiesPath) }
@@ -55,14 +62,89 @@ public struct DownloadOptions: Equatable, Sendable {
         if !cookiesPath.trimmingCharacters(in: .whitespaces).isEmpty, !fileExists(expandedCookiesPath) {
             return "The cookies file doesn't exist."
         }
+        return pathIssue
+    }
+
+    var truncate: Int? { maxNameLength > 0 ? Self.nameLengthRange.clamped(maxNameLength) : nil }
+
+    /// The output folder and templates gamdl actually gets, after applying the layout and naming choices.
+    public var resolvedPaths: (outputDir: String, templates: PathTemplates) {
+        let defaults = PathTemplates()
+        var t = customTemplates
+        if let f = folderLayout.folders {
+            (t.albumFolder, t.compilationFolder, t.noAlbumFolder) = f
+            t.playlistFolder = defaults.playlistFolder
+        }
+        if let f = fileNaming.files {
+            (t.singleDiscFile, t.multiDiscFile, t.noAlbumFile) = f
+            t.playlistFile = defaults.playlistFile
+        }
+        var dir = expandedOutputDir
+        if folderLayout == .flat {
+            // gamdl always saves at least one folder below --output-dir. So pass the parent folder and use
+            // the output folder's own name as the folder template: everything lands directly in it.
+            let url = URL(fileURLWithPath: dir).standardized
+            let name = PathTemplate.literal(url.lastPathComponent)
+            dir = url.deletingLastPathComponent().path
+            (t.albumFolder, t.compilationFolder, t.noAlbumFolder, t.playlistFolder) = (name, name, name, name)
+        }
+        return (dir, t)
+    }
+
+    /// Why the folder/file name settings can't be used, or nil.
+    public var pathIssue: String? {
+        if folderLayout == .flat {
+            let url = URL(fileURLWithPath: expandedOutputDir).standardized
+            let name = url.lastPathComponent
+            if url.path == "/" { return "“No folders” can't be used with / as the output folder." }
+            if PathTemplate.clean(name, directory: true, truncate: truncate) != name {
+                return "“No folders” needs an output folder whose name has no : / \\ ? * < > | \" characters, doesn't start or end with a dot, and fits the name length limit."
+            }
+        }
+        for (label, template) in resolvedPaths.templates.labeled {
+            if let problem = PathTemplate.problem(in: template) { return "\(label) template: \(problem)" }
+        }
         return nil
+    }
+
+    /// Example paths for the current settings, rendered the way gamdl would.
+    public func previewPaths() -> [(label: String, path: String)] {
+        let (dir, t) = resolvedPaths
+        let base = (dir as NSString).abbreviatingWithTildeInPath
+        func path(_ folder: String, _ file: String, _ values: [String: PathTemplate.Value], _ ext: String) -> String {
+            guard let folders = PathTemplate.render(folder, values: values, truncate: truncate),
+                  let files = PathTemplate.render(file, values: values, fileExtension: ext, truncate: truncate)
+            else { return "—" }
+            return ([base] + folders + files).joined(separator: "/")
+        }
+        let song: [String: PathTemplate.Value] = [
+            "album": .text("Abbey Road"), "album_artist": .text("The Beatles"), "artist": .text("The Beatles"),
+            "title": .text("Come Together"), "track": .number(1), "track_total": .number(17),
+            "disc": .number(1), "disc_total": .number(1), "date": .date("1969-09-26"),
+            "composer": .text("John Lennon"), "media_type": .text("Song")]
+        var multi = song
+        (multi["album"], multi["title"], multi["track"], multi["disc"], multi["disc_total"], multi["date"]) =
+            (.text("The Beatles (White Album)"), .text("Birthday"), .number(1), .number(2), .number(2), .date("1968-11-22"))
+        let video: [String: PathTemplate.Value] = [
+            "artist": .text("The Beatles"), "title": .text("Something"), "date": .date("1969-10-06"),
+            "media_type": .text("Music Video")]
+        var paths = [("Song", path(t.albumFolder, t.singleDiscFile, song, ".m4a")),
+                     ("Multi-disc album", path(t.albumFolder, t.multiDiscFile, multi, ".m4a")),
+                     ("Music video", path(t.noAlbumFolder, t.noAlbumFile, video, "." + mvContainer))]
+        if savePlaylist {
+            let playlist: [String: PathTemplate.Value] = [
+                "playlist_title": .text("Road Trip"), "playlist_artist": .text("Apple Music"), "playlist_track": .number(3)]
+            paths.append(("Playlist file", path(t.playlistFolder, t.playlistFile, playlist, ".m3u8")))
+        }
+        return paths
     }
 
     /// Arguments for `gamdl`. `inputs` must already be validated links/ISRCs (see `LinkParser`);
     /// they go after `--` so nothing in them can be read as an option.
     public func arguments(inputs: [String]) -> [String] {
+        let paths = resolvedPaths
         var a = ["rip", "--no-progress", "--no-tracebacks",
-                 "--output-dir", expandedOutputDir,
+                 "--output-dir", paths.outputDir,
                  "--song-codec", songCodec,
                  "--music-video-codec", mvCodec,
                  "--music-video-container", mvContainer,
@@ -74,6 +156,8 @@ public struct DownloadOptions: Equatable, Sendable {
                  savePlaylist ? "--save-playlist" : "--no-save-playlist",
                  overwrite ? "--overwrite" : "--no-overwrite"]
         if saveLyrics { a += ["--lyrics-file-format", lyricsFormat] } else { a.append("--no-lyrics-file") }
+        a += paths.templates.arguments
+        if let truncate { a += ["--truncate", String(truncate)] }
         if !cookiesPath.trimmingCharacters(in: .whitespaces).isEmpty {
             a += ["--auth-mode", "cookies", "--cookies-path", expandedCookiesPath]
         }
@@ -90,7 +174,8 @@ extension ClosedRange where Bound == Int {
 extension DownloadOptions: Codable {
     private enum K: String, CodingKey {
         case outputDir, cookiesPath, songCodec, saveLyrics, lyricsFormat, mvCodec, mvContainer, maxHeight,
-             saveCover, coverFormat, savePlaylist, overwrite, artistSelection, concurrentDownloads
+             saveCover, coverFormat, savePlaylist, overwrite, artistSelection, concurrentDownloads,
+             folderLayout, fileNaming, customTemplates, maxNameLength
     }
 
     /// Missing or unknown values fall back to defaults instead of failing, so settings survive upgrades.
@@ -116,6 +201,11 @@ extension DownloadOptions: Codable {
         overwrite = v(.overwrite, d.overwrite)
         artistSelection = pick(.artistSelection, d.artistSelection, in: Self.artistSelections.map(\.value))
         concurrentDownloads = Self.concurrencyRange.clamped(v(.concurrentDownloads, d.concurrentDownloads))
+        folderLayout = FolderLayout(rawValue: v(.folderLayout, "")) ?? d.folderLayout
+        fileNaming = FileNaming(rawValue: v(.fileNaming, "")) ?? d.fileNaming
+        customTemplates = v(.customTemplates, d.customTemplates)
+        let length: Int = v(.maxNameLength, d.maxNameLength)
+        maxNameLength = length > 0 ? Self.nameLengthRange.clamped(length) : 0
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -134,6 +224,10 @@ extension DownloadOptions: Codable {
         try c.encode(overwrite, forKey: .overwrite)
         try c.encode(artistSelection, forKey: .artistSelection)
         try c.encode(concurrentDownloads, forKey: .concurrentDownloads)
+        try c.encode(folderLayout.rawValue, forKey: .folderLayout)
+        try c.encode(fileNaming.rawValue, forKey: .fileNaming)
+        try c.encode(customTemplates, forKey: .customTemplates)
+        try c.encode(maxNameLength, forKey: .maxNameLength)
     }
 }
 
@@ -150,5 +244,39 @@ extension DownloadOptions: RawRepresentable {
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys
         return (try? String(decoding: encoder.encode(self), as: UTF8.self)) ?? "{}"
+    }
+}
+
+extension PathTemplates: Codable {
+    private enum K: String, CodingKey {
+        case albumFolder, compilationFolder, noAlbumFolder, playlistFolder,
+             singleDiscFile, multiDiscFile, noAlbumFile, playlistFile
+    }
+
+    /// Missing values fall back to gamdl's defaults.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: K.self)
+        self.init()
+        func v(_ k: K, _ fallback: String) -> String { ((try? c.decodeIfPresent(String.self, forKey: k)) ?? nil) ?? fallback }
+        albumFolder = v(.albumFolder, albumFolder)
+        compilationFolder = v(.compilationFolder, compilationFolder)
+        noAlbumFolder = v(.noAlbumFolder, noAlbumFolder)
+        playlistFolder = v(.playlistFolder, playlistFolder)
+        singleDiscFile = v(.singleDiscFile, singleDiscFile)
+        multiDiscFile = v(.multiDiscFile, multiDiscFile)
+        noAlbumFile = v(.noAlbumFile, noAlbumFile)
+        playlistFile = v(.playlistFile, playlistFile)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: K.self)
+        try c.encode(albumFolder, forKey: .albumFolder)
+        try c.encode(compilationFolder, forKey: .compilationFolder)
+        try c.encode(noAlbumFolder, forKey: .noAlbumFolder)
+        try c.encode(playlistFolder, forKey: .playlistFolder)
+        try c.encode(singleDiscFile, forKey: .singleDiscFile)
+        try c.encode(multiDiscFile, forKey: .multiDiscFile)
+        try c.encode(noAlbumFile, forKey: .noAlbumFile)
+        try c.encode(playlistFile, forKey: .playlistFile)
     }
 }
