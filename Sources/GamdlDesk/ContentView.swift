@@ -22,6 +22,7 @@ struct ContentView: View {
     @AppStorage(SettingsKey.showOptions) private var showOptions = true
     @AppStorage(SettingsKey.resultsTab) private var tab = ResultsTab.activity
     @State private var input = ""
+    @FocusState private var editorFocused: Bool
     #if DEBUG
     @Environment(\.openSettings) private var openSettings
     #endif
@@ -40,17 +41,22 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            banners
-            GeometryReader { geo in
-                VStack(spacing: 0) {
-                    linksSection
-                        .frame(height: min(max(geo.size.height * 0.36, 170), 320))
-                    Divider()
-                    resultsSection
+            VStack(spacing: 12) {
+                banners
+                GeometryReader { geo in
+                    VStack(spacing: 12) {
+                        linksSection
+                            .frame(height: min(max(geo.size.height * 0.4, 196), 340))
+                        resultsSection
+                    }
                 }
             }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
             StatusBar(controller: controller)
         }
+        .background(Palette.background)
+        .motion(Motion.emphasized, value: bannerSignature)
         .frame(minWidth: 520, minHeight: 460)
         .inspector(isPresented: $showOptions) {
             OptionsInspector(options: $options, controller: controller)
@@ -68,38 +74,72 @@ struct ContentView: View {
     // MARK: Toolbar
 
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
-        ToolbarItemGroup(placement: .primaryAction) {
-            Button {
-                openOutputFolder()
-            } label: {
-                Label("Open Output Folder", systemImage: "folder")
-            }
-            .help("Open the output folder in Finder (⇧⌘O)")
-            .keyboardShortcut("o", modifiers: [.command, .shift])
+        // The buttons draw their own capsules; macOS 26's glass behind toolbar items would frame them twice.
+        if #available(macOS 26, *) {
+            toolbarButtons.sharedBackgroundVisibility(.hidden)
+        } else {
+            toolbarButtons
+        }
+    }
 
-            Button {
-                setup.isPresented = true
-            } label: {
-                Label("Setup", systemImage: "wrench.and.screwdriver")
-            }
-            .help("Check and install what gamdl needs")
+    private var toolbarButtons: some ToolbarContent {
+        ToolbarItem(placement: .primaryAction) {
+            HStack(spacing: 10) {
+                HStack(spacing: 2) {
+                    Button {
+                        openOutputFolder()
+                    } label: {
+                        Label("Open Output Folder", systemImage: "folder.fill")
+                    }
+                    .help("Open the output folder in Finder (⇧⌘O)")
+                    .keyboardShortcut("o", modifiers: [.command, .shift])
 
-            SettingsLink {
-                Label("Settings", systemImage: "gearshape")
-            }
-            .help("Output folder, account, performance and updates (⌘,)")
+                    Button {
+                        setup.isPresented = true
+                    } label: {
+                        Label("Setup", systemImage: "wrench.and.screwdriver.fill")
+                    }
+                    .help("Check and install what gamdl needs")
 
-            Button {
-                withAnimation { showOptions.toggle() }
-            } label: {
-                Label("Options", systemImage: "sidebar.trailing")
+                    SettingsLink {
+                        Label("Settings", systemImage: "gearshape.fill")
+                    }
+                    .help("Output folder, account, performance and updates (⌘,)")
+                }
+                .buttonStyle(IconButtonStyle())
+                .padding(2)
+                .background(Palette.surfaceHigh, in: Capsule())
+
+                Button {
+                    withAnimation(Motion.emphasized) { showOptions.toggle() }
+                } label: {
+                    Label("Options", systemImage: "slider.horizontal.3")
+                }
+                .buttonStyle(IconButtonStyle(selected: showOptions))
+                .padding(2)
+                .background(Palette.surfaceHigh, in: Capsule())
+                .help(showOptions ? "Hide options (⌥⌘I)" : "Show options (⌥⌘I)")
+                .keyboardShortcut("i", modifiers: [.command, .option])
+                .accessibilityAddTraits(showOptions ? .isSelected : [])
             }
-            .help(showOptions ? "Hide options (⌥⌘I)" : "Show options (⌥⌘I)")
-            .keyboardShortcut("i", modifiers: [.command, .option])
         }
     }
 
     // MARK: Banners
+
+    /// Everything that decides which banner shows, so a change animates it in or out.
+    private struct BannerSignature: Equatable {
+        let missing, outdated, losslessRefused, signInRejected: Bool
+        let signIn: DownloadController.SignInFlow
+        let update: AppUpdater.State?
+    }
+
+    private var bannerSignature: BannerSignature {
+        BannerSignature(missing: controller.gamdlPath == nil, outdated: controller.gamdlIsOutdated,
+                        losslessRefused: controller.showsBanner(for: .losslessRefused),
+                        signInRejected: controller.showsBanner(for: .signInRejected),
+                        signIn: controller.signInFlow, update: updater.showsBanner ? updater.state : nil)
+    }
 
     @ViewBuilder private var banners: some View {
         if controller.gamdlPath == nil || controller.gamdlIsOutdated {
@@ -109,6 +149,7 @@ struct ContentView: View {
                        ? "Setup installs it, along with what it needs."
                        : "Gamdl Desk needs gamdl \(Gamdl.minimumMajorVersion) or later. Setup can update it.") {
                 Button("Open Setup…") { setup.isPresented = true }
+                    .buttonStyle(PillButtonStyle(kind: .filled))
                 Button("Check Again") { setup.checkAgain() }
             }
         } else if controller.showsBanner(for: .losslessRefused) {
@@ -123,14 +164,14 @@ struct ContentView: View {
                 Button("Dismiss") { controller.dismiss(.losslessRefused) }
             }
         } else if controller.signInFlow == .waiting {
-            Banner(systemImage: "terminal", tint: .blue,
+            Banner(systemImage: "terminal", tint: Palette.primary,
                    title: "Finish signing in in Terminal",
                    message: "Answer gamdl's questions in the Terminal window. This updates by itself when you're done.",
                    showsProgress: true) {
                 Button("Cancel") { controller.cancelSignInWait() }
             }
         } else if case .succeeded(let mode) = controller.signInFlow {
-            Banner(systemImage: "checkmark.circle.fill", tint: .green,
+            Banner(systemImage: "checkmark", tint: Palette.primary,
                    title: "Signed in to Apple Music",
                    message: "gamdl saved your sign-in (\(SavedAuth.label(for: mode))). You can download now.") {
                 Button("OK") { controller.dismissSignInResult() }
@@ -142,10 +183,11 @@ struct ContentView: View {
                 Button("Dismiss") { controller.dismissSignInResult() }
             }
         } else if controller.showsBanner(for: .signInRejected) {
-            Banner(systemImage: "person.crop.circle.badge.exclamationmark", tint: .blue,
+            Banner(systemImage: "person.crop.circle.badge.exclamationmark", tint: Palette.primary,
                    title: "gamdl needs to sign in to Apple Music",
                    message: "Sign in once in Terminal, or choose a cookies.txt exported from music.apple.com in Settings ▸ Account.") {
                 Button("Sign In with Terminal…") { controller.signInInTerminal() }
+                    .buttonStyle(PillButtonStyle(kind: .filled))
                 Button("Dismiss") { controller.dismiss(.signInRejected) }
             }
         } else if updater.showsBanner {
@@ -157,25 +199,26 @@ struct ContentView: View {
         let hide = { updater.showsBanner = false }
         switch updater.state {
         case .available(let release):
-            Banner(systemImage: "arrow.down.circle.fill", tint: .blue,
+            Banner(systemImage: "arrow.down", tint: Palette.primary,
                    title: "Gamdl Desk \(release.version) is available",
                    message: updater.installBlockingReason
                        ?? "You have \(updater.currentVersion ?? "an older version"). Installing replaces the app and reopens it.") {
                 Button("Install and Relaunch") { updater.install(release) }
+                    .buttonStyle(PillButtonStyle(kind: .filled))
                     .disabled(updater.installBlockingReason != nil)
                 Button("What's New") { NSWorkspace.shared.open(release.pageURL) }
                 Button("Later", action: hide)
             }
         case .installing(let release):
-            Banner(systemImage: "arrow.down.circle", tint: .blue,
+            Banner(systemImage: "arrow.down", tint: Palette.primary,
                    title: "Installing Gamdl Desk \(release.version)…",
                    message: "Gamdl Desk reopens by itself when it's done.", showsProgress: true) {}
         case .checking:
-            Banner(systemImage: "arrow.triangle.2.circlepath", tint: .blue,
+            Banner(systemImage: "arrow.triangle.2.circlepath", tint: Palette.primary,
                    title: "Checking for updates…", message: "Looking at the latest release on GitHub.",
                    showsProgress: true) {}
         case .upToDate:
-            Banner(systemImage: "checkmark.circle.fill", tint: .green,
+            Banner(systemImage: "checkmark", tint: Palette.primary,
                    title: "Gamdl Desk is up to date",
                    message: "You have the latest version (\(updater.currentVersion ?? "")).") {
                 Button("OK", action: hide)
@@ -194,21 +237,20 @@ struct ContentView: View {
     // MARK: Links
 
     private var linksSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text("Links").font(.headline)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 8) {
+                Text("Links").font(.title3.weight(.semibold))
                 linkSummary
-                    .font(.callout)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
                     .layoutPriority(-1)
                 Spacer(minLength: 8)
-                Button("Paste", systemImage: "doc.on.clipboard", action: paste)
-                    .help("Add links from the clipboard (⇧⌘V)")
-                    .keyboardShortcut("v", modifiers: [.command, .shift])
-                Button("Clear", systemImage: "xmark.circle") { input = "" }
+                Button("Clear", systemImage: "xmark") { input = "" }
+                    .buttonStyle(PillButtonStyle(kind: .text))
                     .disabled(input.isEmpty)
                     .help("Remove all links")
+                Button("Paste", systemImage: "doc.on.clipboard", action: paste)
+                    .buttonStyle(PillButtonStyle(kind: .tonal))
+                    .help("Add links from the clipboard (⇧⌘V)")
+                    .keyboardShortcut("v", modifiers: [.command, .shift])
             }
             .labelStyle(.titleAndIcon)
             .controlSize(.small)
@@ -217,81 +259,103 @@ struct ContentView: View {
                 TextEditor(text: $input)
                     .font(.system(.body, design: .monospaced))
                     .scrollContentBackground(.hidden)
-                    .padding(6)
+                    .padding(8)
+                    .focused($editorFocused)
                     .accessibilityLabel("Apple Music links")
                 if input.isEmpty {
                     Text("Paste album, song, playlist, artist or music-video links (or ISRC codes), one per line.")
                         .foregroundStyle(.tertiary)
-                        .padding(.horizontal, 11)
-                        .padding(.vertical, 6)
+                        .padding(.horizontal, 13)
+                        .padding(.vertical, 8)
                         .allowsHitTesting(false)
                 }
             }
-            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.separator))
+            .background(Palette.surfaceHigh, in: RoundedRectangle(cornerRadius: Radius.field, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Radius.field, style: .continuous)
+                .strokeBorder(editorFocused ? Palette.primary : Palette.outline, lineWidth: editorFocused ? 2 : 1))
+            .motion(Motion.quick, value: editorFocused)
 
             downloadRow
         }
-        .padding(12)
+        .card()
+        .motion(Motion.standard, value: plan.inputs.count)
+        .motion(Motion.standard, value: parsed.invalid.count)
     }
 
     private var downloadRow: some View {
         HStack(spacing: 8) {
             if !controller.isRunning, let reason = blockingReason {
-                Text(reason)
+                Label(reason, systemImage: "info.circle")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .help(reason)
+                    .transition(.opacity)
             }
             Spacer(minLength: 8)
             if controller.isRunning {
                 Button(role: .cancel) {
                     controller.stop()
                 } label: {
-                    Label(controller.phase.isStopping ? "Stopping…" : "Stop", systemImage: "stop.circle.fill")
-                        .frame(minWidth: 96)
+                    Label(controller.phase.isStopping ? "Stopping…" : "Stop", systemImage: "stop.fill")
+                        .frame(minWidth: 100)
                 }
+                .buttonStyle(PillButtonStyle(kind: .tonal))
                 .help("Stop the download (⌘.)")
                 .keyboardShortcut(".", modifiers: .command)
                 .disabled(controller.phase.isStopping)
+                .transition(.scale(scale: 0.85).combined(with: .opacity))
             } else {
                 Button(action: download) {
                     Label(plan.inputs.count > 1 ? "Download \(plan.inputs.count)" : "Download",
-                          systemImage: "arrow.down.circle.fill")
-                        .frame(minWidth: 96)
+                          systemImage: "arrow.down")
+                        .contentTransition(.numericText())
+                        .frame(minWidth: 100)
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(PillButtonStyle(kind: .filled))
                 .help(blockingReason ?? "Download \(plan.inputs.count) item\(plan.inputs.count == 1 ? "" : "s") (⌘↩)")
                 .keyboardShortcut(.return, modifiers: .command)
                 .disabled(blockingReason != nil)
+                .transition(.scale(scale: 0.85).combined(with: .opacity))
             }
         }
         .labelStyle(.titleAndIcon)
         .controlSize(.large)
+        .motion(Motion.emphasized, value: controller.isRunning)
     }
 
     @ViewBuilder private var linkSummary: some View {
         let r = parsed, p = plan
-        if !r.valid.isEmpty || !r.invalid.isEmpty {
+        let chipTransition = AnyTransition.scale(scale: 0.8).combined(with: .opacity)
+        ViewThatFits(in: .horizontal) {
             HStack(spacing: 6) {
                 if !p.inputs.isEmpty {
-                    Text("\(p.inputs.count) ready").foregroundStyle(.secondary)
+                    Chip(text: "\(p.inputs.count) ready", systemImage: "checkmark", tint: Palette.primary)
+                        .transition(chipTransition)
                 }
                 if p.skippedVideos > 0 {
-                    Text("· \(p.skippedVideos) music video\(p.skippedVideos == 1 ? "" : "s") skipped")
-                        .foregroundStyle(.secondary)
+                    Chip(text: "\(p.skippedVideos) video\(p.skippedVideos == 1 ? "" : "s") skipped", systemImage: "film")
                         .help("Music videos are turned off in Options.")
+                        .transition(chipTransition)
                 }
                 if r.duplicates > 0 {
-                    Text("· \(r.duplicates) duplicate\(r.duplicates == 1 ? "" : "s") ignored").foregroundStyle(.secondary)
+                    Chip(text: "\(r.duplicates) duplicate\(r.duplicates == 1 ? "" : "s")", systemImage: "square.on.square")
+                        .help("Duplicates are ignored.")
+                        .transition(chipTransition)
                 }
                 if !r.invalid.isEmpty {
-                    Label("\(r.invalid.count) not recognized", systemImage: "exclamationmark.circle.fill")
-                        .foregroundStyle(.red)
+                    Chip(text: "\(r.invalid.count) not recognized", systemImage: "exclamationmark.circle.fill", tint: Palette.error)
                         .help("Not Apple Music links:\n" + r.invalid.prefix(20).joined(separator: "\n"))
+                        .transition(chipTransition)
                 }
+            }
+            // Too narrow for every chip: the one that matters most.
+            if !r.invalid.isEmpty {
+                Chip(text: "\(r.invalid.count) not recognized", systemImage: "exclamationmark.circle.fill", tint: Palette.error)
+                    .help("Not Apple Music links:\n" + r.invalid.prefix(20).joined(separator: "\n"))
+            } else if !p.inputs.isEmpty {
+                Chip(text: "\(p.inputs.count) ready", systemImage: "checkmark", tint: Palette.primary)
             }
         }
     }
@@ -301,14 +365,10 @@ struct ContentView: View {
     private var resultsSection: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
-                Picker("Results", selection: $tab) {
-                    Text(controller.items.isEmpty ? "Activity" : "Activity (\(controller.items.count))")
-                        .tag(ResultsTab.activity)
-                    Text("Log").tag(ResultsTab.log)
+                PillPicker(selection: $tab, options: ResultsTab.allCases) { tab in
+                    tab == .activity && !controller.items.isEmpty ? "Activity · \(controller.items.count)" : tab.rawValue
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
+                .accessibilityLabel("Results")
                 Spacer()
                 Menu {
                     Button("Copy Log") { copy(controller.log.text) }
@@ -328,9 +388,9 @@ struct ContentView: View {
                     .keyboardShortcut("k", modifiers: .command)
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.vertical, 10)
 
-            Divider()
+            Divider().overlay(Palette.outline)
 
             Group {
                 switch tab {
@@ -338,9 +398,12 @@ struct ContentView: View {
                 case .log: LogView(store: controller.log)
                 }
             }
+            .transition(.opacity)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(nsColor: .textBackgroundColor))
         }
+        .card(padding: 0)
+        .clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
+        .motion(Motion.standard, value: tab)
     }
 
     // MARK: Actions
@@ -387,36 +450,41 @@ struct ActivityView: View {
     let showLog: () -> Void
 
     var body: some View {
-        if controller.items.isEmpty {
-            emptyState
-        } else {
-            List(controller.items) { item in
-                ActivityRow(event: item.event)
+        Group {
+            if controller.items.isEmpty {
+                emptyState.transition(.opacity)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 2) {
+                        ForEach(controller.items) { item in
+                            ActivityRow(event: item.event)
+                                .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity),
+                                                        removal: .opacity))
+                        }
+                    }
+                    .padding(8)
+                }
+                .transition(.opacity)
             }
-            .listStyle(.inset)
-            .scrollContentBackground(.hidden)
         }
+        .motion(Motion.standard, value: controller.items.count)
     }
 
     @ViewBuilder private var emptyState: some View {
         VStack(spacing: 10) {
-            Image(nsImage: NSApp.applicationIconImage)
-                .resizable()
-                .interpolation(.high)
-                .frame(width: 72, height: 72)
-                .opacity(controller.isRunning ? 0.6 : 1)
-                .accessibilityHidden(true)
+            GlowingAppIcon(active: controller.isRunning)
+                .padding(.bottom, 4)
             switch controller.phase {
             case .running, .stopping:
                 Text("Working…").font(.title3.weight(.semibold))
                 Text("Finished items will appear here. Details are in the Log.")
                     .foregroundStyle(.secondary)
-                Button("Show Log", action: showLog)
+                Button("Show Log", action: showLog).buttonStyle(PillButtonStyle(kind: .tonal))
             case .finished(let t, _):
                 Text(t.stoppedByUser ? "Stopped" : t.succeeded ? "Nothing to download" : "Download failed")
                     .font(.title3.weight(.semibold))
                 Text("See the log for what gamdl reported.").foregroundStyle(.secondary)
-                Button("Show Log", action: showLog)
+                Button("Show Log", action: showLog).buttonStyle(PillButtonStyle(kind: .tonal))
             case .failedToStart(let reason):
                 Text("Couldn't start").font(.title3.weight(.semibold))
                 Text(reason).foregroundStyle(.secondary)
@@ -434,16 +502,14 @@ struct ActivityView: View {
 
 struct ActivityRow: View {
     let event: OutputEvent
+    @State private var hovering = false
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: icon.name)
-                .foregroundStyle(icon.color)
-                .font(.title3)
-                .frame(width: 22)
+        HStack(spacing: 12) {
+            IconBadge(systemImage: icon.name, tint: icon.color)
                 .accessibilityLabel(icon.label)
             VStack(alignment: .leading, spacing: 2) {
-                Text(event.title).lineLimit(1).truncationMode(.middle)
+                Text(event.title).fontWeight(.medium).lineLimit(1).truncationMode(.middle)
                 Text(event.path.map { "\(event.detail) · \(($0 as NSString).lastPathComponent)" } ?? event.detail)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -451,14 +517,21 @@ struct ActivityRow: View {
             }
             Spacer(minLength: 4)
             if let path = event.path {
-                Button("Show in Finder", systemImage: "magnifyingglass.circle") { reveal(path) }
+                Button("Show in Finder", systemImage: "folder") { reveal(path) }
                     .labelStyle(.iconOnly)
-                    .buttonStyle(.borderless)
+                    .buttonStyle(PillButtonStyle(kind: .text))
+                    .controlSize(.small)
+                    .opacity(hovering ? 1 : 0.55)
                     .help("Show in Finder")
             }
         }
-        .padding(.vertical, 3)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(hovering ? Palette.surfaceHigh : .clear,
+                    in: RoundedRectangle(cornerRadius: Radius.tile, style: .continuous))
         .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .motion(Motion.quick, value: hovering)
         .help(event.path ?? event.detail)
         .contextMenu {
             if let path = event.path {
@@ -473,10 +546,10 @@ struct ActivityRow: View {
 
     private var icon: (name: String, color: Color, label: String) {
         switch event.kind {
-        case .saved: ("checkmark.circle.fill", .green, "Saved")
-        case .skipped: ("arrow.uturn.forward.circle.fill", .secondary, "Skipped")
-        case .partial: ("exclamationmark.triangle.fill", .orange, "Partly saved")
-        case .failed: ("xmark.octagon.fill", .red, "Failed")
+        case .saved: ("checkmark", Palette.primary, "Saved")
+        case .skipped: ("arrow.uturn.forward", .secondary, "Skipped")
+        case .partial: ("exclamationmark", .orange, "Partly saved")
+        case .failed: (("xmark", Palette.error, "Failed"))
         }
     }
 
@@ -491,31 +564,41 @@ struct StatusBar: View {
     let controller: DownloadController
 
     var body: some View {
-        HStack(spacing: 12) {
-            status
-            if !controller.items.isEmpty {
-                counts
+        VStack(spacing: 0) {
+            if controller.isRunning {
+                IndeterminateBar().transition(.opacity)
+            } else {
+                Rectangle().fill(Palette.outline.opacity(0.7)).frame(height: 1)
             }
-            Spacer(minLength: 8)
-            if let version = controller.gamdlVersion {
-                Text("gamdl \(version)").foregroundStyle(.tertiary)
+            HStack(spacing: 12) {
+                status
+                if !controller.items.isEmpty {
+                    counts
+                }
+                Spacer(minLength: 8)
+                if let version = controller.gamdlVersion {
+                    Text("gamdl \(version)").foregroundStyle(.tertiary)
+                }
             }
+            .font(.callout)
+            .lineLimit(1)
+            .padding(.horizontal, 16)
+            .frame(height: 30)
         }
-        .font(.callout)
-        .lineLimit(1)
-        .padding(.horizontal, 12)
-        .frame(height: 28)
-        .background(.bar)
-        .overlay(alignment: .top) { Divider() }
+        .background(Palette.background)
+        .motion(Motion.standard, value: controller.isRunning)
     }
 
     @ViewBuilder private var status: some View {
         switch controller.phase {
         case .idle:
-            Label("Ready", systemImage: "circle.fill").foregroundStyle(.secondary).imageScale(.small)
+            HStack(spacing: 6) {
+                Circle().fill(Palette.primary).frame(width: 7, height: 7)
+                Text("Ready")
+            }
+            .foregroundStyle(.secondary)
         case .running(let since), .stopping(let since):
             HStack(spacing: 6) {
-                ProgressView().controlSize(.small)
                 Text(controller.phase.isStopping ? "Stopping…" : "Downloading…")
                 TimelineView(.periodic(from: since, by: 1)) { context in
                     Text(Self.duration(context.date.timeIntervalSince(since)))
@@ -529,26 +612,25 @@ struct StatusBar: View {
                     .foregroundStyle(.secondary)
             } else if t.succeeded {
                 Label("Finished in \(Self.duration(duration))", systemImage: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
+                    .foregroundStyle(Palette.primary)
             } else {
                 Label(t.signaled ? "gamdl crashed (signal \(t.status))" : "Finished with errors (exit code \(t.status))",
                       systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)
             }
         case .failedToStart(let reason):
-            Label(reason, systemImage: "xmark.octagon.fill").foregroundStyle(.red)
+            Label(reason, systemImage: "xmark.octagon.fill").foregroundStyle(Palette.error)
         }
     }
 
     private var counts: some View {
-        HStack(spacing: 10) {
-            Label("\(controller.savedCount)", systemImage: "checkmark.circle").help("Saved")
-            Label("\(controller.skippedCount)", systemImage: "arrow.uturn.forward.circle").help("Skipped")
-            Label("\(controller.failedCount)", systemImage: "xmark.octagon")
-                .foregroundStyle(controller.failedCount > 0 ? .red : .secondary)
+        HStack(spacing: 6) {
+            Chip(text: "\(controller.savedCount)", systemImage: "checkmark", tint: Palette.primary).help("Saved")
+            Chip(text: "\(controller.skippedCount)", systemImage: "arrow.uturn.forward").help("Skipped")
+            Chip(text: "\(controller.failedCount)", systemImage: "xmark",
+                 tint: controller.failedCount > 0 ? Palette.error : .secondary)
                 .help("Failed")
         }
-        .foregroundStyle(.secondary)
         .monospacedDigit()
     }
 
@@ -571,24 +653,26 @@ struct Banner<Actions: View>: View {
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
-            HStack(spacing: 10) { icon; text; Spacer(minLength: 8); HStack { actions } }
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .top, spacing: 10) { icon; text }
-                HStack { actions }.padding(.leading, 30)
+            HStack(spacing: 12) { icon; text; Spacer(minLength: 8); HStack(spacing: 6) { actions } }
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .top, spacing: 12) { icon; text }
+                HStack(spacing: 6) { actions }.padding(.leading, 44)
             }
         }
+        .buttonStyle(PillButtonStyle(kind: .tonal))
         .controlSize(.small)
-        .padding(10)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(tint.opacity(0.12))
-        .overlay(alignment: .bottom) { Divider() }
+        .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Radius.card, style: .continuous).strokeBorder(tint.opacity(0.28)))
+        .transition(.move(edge: .top).combined(with: .opacity))
     }
 
     @ViewBuilder private var icon: some View {
         if showsProgress {
-            ProgressView().controlSize(.small).frame(width: 20)
+            ProgressView().controlSize(.small).frame(width: 32, height: 32)
         } else {
-            Image(systemName: systemImage).foregroundStyle(tint).font(.title3).frame(width: 20)
+            IconBadge(systemImage: systemImage, tint: tint, size: 32)
         }
     }
 

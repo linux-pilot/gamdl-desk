@@ -55,6 +55,8 @@ private struct SettingsForm<Content: View>: View {
     var body: some View {
         Form { content }
             .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
+            .background(Palette.background)
             .scrollDisabled(true)
             .fixedSize(horizontal: false, vertical: true)
     }
@@ -77,7 +79,7 @@ private struct AccountSection: View {
                       placeholder: "Optional", allowsClear: true)
             if options.cookiesFileIsMissing() {
                 Label("This file doesn't exist.", systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Palette.error)
                     .font(.caption)
             }
             Button(signInButtonTitle) { controller.signInInTerminal() }
@@ -120,11 +122,11 @@ private struct RequirementsSection: View {
     private func requirement(_ name: String, path: String?, version: String?, outdated: Bool = false) -> some View {
         LabeledContent(name) {
             if path == nil {
-                Label("Not installed", systemImage: "xmark.circle.fill").foregroundStyle(.red)
+                Label("Not installed", systemImage: "xmark.circle.fill").foregroundStyle(Palette.error)
             } else if outdated {
                 Label("\(version ?? "") · too old", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
             } else {
-                Label(version ?? "Installed", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                Label(version ?? "Installed", systemImage: "checkmark.circle.fill").foregroundStyle(Palette.primary)
             }
         }
     }
@@ -160,10 +162,10 @@ struct AppUpdateStatus: View {
                 ProgressView().controlSize(.small)
                 Text("Checking…").foregroundStyle(.secondary)
             case .upToDate:
-                Label("Up to date", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                Label("Up to date", systemImage: "checkmark.circle.fill").foregroundStyle(Palette.primary)
             case .available(let release):
                 Label("Version \(release.version) is available", systemImage: "arrow.down.circle.fill")
-                    .foregroundStyle(.blue)
+                    .foregroundStyle(Palette.primary)
             case .installing(let release):
                 ProgressView().controlSize(.small)
                 Text("Installing \(release.version)…").foregroundStyle(.secondary)

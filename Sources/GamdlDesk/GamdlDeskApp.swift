@@ -9,6 +9,7 @@ struct GamdlDeskApp: App {
         // A single window: one gamdl process at a time, and quitting can stop it cleanly.
         Window("Gamdl Desk", id: "main") {
             ContentView(controller: appDelegate.controller, setup: appDelegate.setup, updater: appDelegate.updater)
+                .appTheme()
         }
         .commands {
             CommandGroup(after: .appInfo) {
@@ -24,6 +25,7 @@ struct GamdlDeskApp: App {
 
         Settings {
             SettingsView(controller: appDelegate.controller, setup: appDelegate.setup, updater: appDelegate.updater)
+                .appTheme()
         }
     }
 }

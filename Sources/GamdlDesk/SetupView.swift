@@ -45,6 +45,7 @@ struct SetupView: View {
         }
         .frame(width: 560)
         .fixedSize(horizontal: false, vertical: true)
+        .background(Palette.background)
         .onChange(of: setup.installing) { _, installing in
             if installing != nil { showsDetails = true }
         }
@@ -52,10 +53,7 @@ struct SetupView: View {
 
     private var header: some View {
         HStack(spacing: 12) {
-            Image(nsImage: NSApp.applicationIconImage)
-                .resizable()
-                .frame(width: 48, height: 48)
-                .accessibilityHidden(true)
+            GlowingAppIcon(size: 48, active: setup.isRunning)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Set Up Gamdl Desk").font(.title2.weight(.semibold))
                 Text("Gamdl Desk downloads with gamdl. Install what's missing, top to bottom.")
@@ -69,11 +67,14 @@ struct SetupView: View {
     private var footer: some View {
         HStack {
             Button("Check Again") { setup.checkAgain() }
+                .buttonStyle(PillButtonStyle(kind: .tonal))
                 .disabled(setup.isRunning)
             Spacer()
             Button("Done") { dismiss() }
+                .buttonStyle(PillButtonStyle(kind: .filled))
                 .keyboardShortcut(.defaultAction)
         }
+        .controlSize(.large)
         .padding([.horizontal, .bottom], 20)
     }
 
@@ -171,8 +172,8 @@ struct SetupRow<Actions: View>: View {
     @ViewBuilder let actions: Actions
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            icon.frame(width: 20)
+        HStack(alignment: .top, spacing: 12) {
+            icon.frame(width: 30, height: 30)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).fontWeight(.semibold)
                 Text(status).font(.callout).foregroundStyle(statusColor).textSelection(.enabled)
@@ -180,7 +181,7 @@ struct SetupRow<Actions: View>: View {
             }
             .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 8)
-            actions.controlSize(.small)
+            actions.controlSize(.small).buttonStyle(PillButtonStyle(kind: .tonal))
         }
         .padding(.vertical, 2)
         .accessibilityElement(children: .contain)
@@ -189,18 +190,18 @@ struct SetupRow<Actions: View>: View {
     @ViewBuilder private var icon: some View {
         switch state {
         case .working: ProgressView().controlSize(.small)
-        case .done: Image(systemName: "checkmark.circle.fill").foregroundStyle(.green).accessibilityLabel("Done")
-        case .missing: Image(systemName: "xmark.circle.fill").foregroundStyle(.red).accessibilityLabel("Missing")
-        case .warning: Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange).accessibilityLabel("Needs attention")
-        case .pending: Image(systemName: "circle.dashed").foregroundStyle(.secondary).accessibilityLabel("Waiting")
-        case .optional: Image(systemName: "circle").foregroundStyle(.secondary).accessibilityLabel("Optional")
+        case .done: IconBadge(systemImage: "checkmark", tint: Palette.primary).accessibilityLabel("Done")
+        case .missing: IconBadge(systemImage: "xmark", tint: Palette.error).accessibilityLabel("Missing")
+        case .warning: IconBadge(systemImage: "exclamationmark", tint: .orange).accessibilityLabel("Needs attention")
+        case .pending: IconBadge(systemImage: "ellipsis", tint: .secondary).accessibilityLabel("Waiting")
+        case .optional: IconBadge(systemImage: "plus", tint: .secondary).accessibilityLabel("Optional")
         }
     }
 
     private var statusColor: Color {
         switch state {
-        case .done: .green
-        case .missing: .red
+        case .done: Palette.primary
+        case .missing: Palette.error
         case .warning: .orange
         default: .secondary
         }

@@ -94,6 +94,8 @@ struct OptionsInspector: View {
             }
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .background(Palette.background)
         .disabled(controller.isRunning)
     }
 }
@@ -186,7 +188,7 @@ struct SignInStatus: View {
             switch controller.savedAuth {
             case .mode(let mode):
                 Label("Signed in · \(SavedAuth.label(for: mode))", systemImage: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
+                    .foregroundStyle(Palette.primary)
             case .none?:
                 Label("Not signed in", systemImage: "person.crop.circle.badge.exclamationmark")
                     .foregroundStyle(.orange)
@@ -240,7 +242,7 @@ struct FolderLayoutSection: View {
             Text("Preview").font(.subheadline.weight(.semibold))
             if let issue = options.pathIssue {
                 Label(issue, systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Palette.error)
                     .font(.caption)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
@@ -301,7 +303,7 @@ struct TemplateField: View {
             if let problem = PathTemplate.problem(in: text) {
                 Label(problem, systemImage: "exclamationmark.circle.fill")
                     .font(.caption)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Palette.error)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
