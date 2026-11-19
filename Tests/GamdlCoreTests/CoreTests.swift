@@ -403,3 +403,18 @@ import Testing
         #expect(o.effectiveArtistSelection == .all)
     }
 }
+
+@Suite struct ToolVersionTests {
+    @Test func findsTheFirstVersionNumber() {
+        #expect(ToolVersion.find(in: ["", "Gamdl 4.0.2"]) == "4.0.2")
+        #expect(ToolVersion.find(in: ["uv 0.13.6 (329bf9448 2026-10-26 aarch64-apple-darwin)"]) == "0.13.6")
+        #expect(ToolVersion.find(in: ["gamdl 2.4"]) == "2.4")
+        #expect(ToolVersion.find(in: ["command not found"]) == nil)
+    }
+
+    @Test func readsTheMajorVersion() {
+        #expect(ToolVersion.major("4.0.2") == 4)
+        #expect(ToolVersion.major("12.1") == 12)
+        #expect(ToolVersion.major("") == nil)
+    }
+}

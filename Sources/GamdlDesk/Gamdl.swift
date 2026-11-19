@@ -1,21 +1,28 @@
 import Foundation
 import GamdlCore
 
-/// Where gamdl is installed and how the app runs it.
+/// Where gamdl (and uv, which installs it) live, and how the app runs them.
 enum Gamdl {
-    /// The app doesn't get the login shell's PATH, so gamdl is looked for where installers put it.
+    /// The app doesn't get the login shell's PATH, so tools are looked for where installers put them.
     static let searchPaths = [
         "\(NSHomeDirectory())/.local/bin",
         "/opt/homebrew/bin",
         "/usr/local/bin",
         "/usr/bin", "/bin", "/usr/sbin", "/sbin",
     ]
-    static let installCommand = #"uv tool install "gamdl[widevine]""#
+    /// The download command line the app builds needs gamdl 4 (`gamdl rip`).
+    static let minimumMajorVersion = 4
+    /// Installs gamdl, or updates it to the latest version, with uv. uv also downloads a suitable
+    /// Python (3.10 or later) if there isn't one.
+    static let installArguments = ["tool", "install", "--upgrade", "gamdl[widevine]"]
+    static let installCommand = (["uv"] + installArguments).map(Shell.quoted).joined(separator: " ")
+    /// uv's official installer. It puts uv in ~/.local/bin.
+    static let uvInstallCommand = "curl -LsSf https://astral.sh/uv/install.sh | sh"
     static let configPath = "\(NSHomeDirectory())/.gamdl/config.yml"
     static let wrapperURL = URL(string: "https://github.com/glomatico/wrapper-v2")!
 
-    static func locate() -> String? {
-        searchPaths.map { "\($0)/gamdl" }.first { FileManager.default.isExecutableFile(atPath: $0) }
+    static func locate(_ tool: String = "gamdl") -> String? {
+        searchPaths.map { "\($0)/\(tool)" }.first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
     static var environment: [String: String] {
@@ -30,7 +37,7 @@ enum Gamdl {
         return env
     }
 
-    /// Starts the gamdl at `path`. Output arrives with terminal escapes removed.
+    /// Starts the tool at `path` (gamdl, uv, …). Output arrives with terminal escapes removed.
     @MainActor
     static func start(_ path: String, _ arguments: [String],
                       onLines: @escaping @MainActor @Sendable ([String]) -> Void,
@@ -48,7 +55,7 @@ enum Gamdl {
         return runner
     }
 
-    /// Runs gamdl to the end and returns everything it printed, or nil if it couldn't start.
+    /// Runs the tool to the end and returns everything it printed, or nil if it couldn't start.
     @MainActor
     static func output(_ path: String, _ arguments: [String]) async -> (lines: [String], termination: CommandRunner.Termination)? {
         let buffer = LineBuffer()

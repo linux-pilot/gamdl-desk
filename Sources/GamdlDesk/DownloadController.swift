@@ -85,6 +85,10 @@ final class DownloadController {
     @ObservationIgnored private var signInTask: Task<Void, Never>?
 
     var isRunning: Bool { phase.startedAt != nil }
+    /// Older than the gamdl 4 command line the app builds.
+    var gamdlIsOutdated: Bool {
+        gamdlVersion.flatMap(ToolVersion.major).map { $0 < Gamdl.minimumMajorVersion } ?? false
+    }
     var checkingAuth: Bool { authCheck != nil }
 
     var savedCount: Int { items.count(where: { $0.event.kind == .saved || $0.event.kind == .partial }) }
@@ -107,8 +111,7 @@ final class DownloadController {
         Task {
             let output = await Gamdl.output(gamdlPath, ["--version"])
             guard self.gamdlPath == gamdlPath else { return }
-            let version = output?.lines.lazy.compactMap { $0.firstMatch(of: /\d+\.\d+(\.\d+)?/) }.first
-            gamdlVersion = version.map { String($0.output.0) }
+            gamdlVersion = output.flatMap { ToolVersion.find(in: $0.lines) }
         }
         refreshAuthStatus()
     }
@@ -165,7 +168,7 @@ final class DownloadController {
         if gamdlPath == nil { locateGamdl() }
         guard let gamdlPath else {
             phase = .failedToStart("gamdl isn't installed.")
-            log.append(["gamdl not found. Install it in Terminal with:", "  \(Gamdl.installCommand)", ""])
+            log.append(["gamdl not found. Install it from Gamdl Desk ▸ Setup…, or in Terminal with:", "  \(Gamdl.installCommand)", ""])
             return
         }
         do {

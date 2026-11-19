@@ -10,6 +10,7 @@ Paste Apple Music links, pick codecs and an output folder, and press **Download*
 
 ## Features
 
+- **Setup**: checks what gamdl needs and installs what's missing: uv (which also downloads a suitable Python), gamdl itself, and the Apple Music sign-in. It opens by itself when gamdl isn't installed, and is always under Gamdl Desk ▸ Setup…. It also shows whether Lossless (Wrapper) is set up.
 - **Link checking as you paste**: Apple Music links (album, song, playlist, artist, music video) and ISRC codes are counted. Duplicates are ignored, and anything else is flagged and never passed to gamdl.
 - **Activity list**: shows what was saved, skipped or failed, with Show in Finder for each file. The status bar shows elapsed time and totals.
 - **Fast log**: copy it, save it, or search it with ⌘F. It stays responsive with tens of thousands of lines.
@@ -26,11 +27,11 @@ Paste Apple Music links, pick codecs and an output folder, and press **Download*
 
 - macOS 14 or later, Apple Silicon
 - Xcode or the Xcode command-line tools (Swift 6)
-- gamdl 4.x:
+- gamdl 4.x. **Setup** in the app installs it (and [uv](https://docs.astral.sh/uv/), if needed). To do it yourself instead:
   ```bash
-  uv tool install "gamdl[widevine]"
+  uv tool install --upgrade "gamdl[widevine]"
   ```
-  The app looks for `gamdl` in `~/.local/bin`, `/opt/homebrew/bin` and `/usr/local/bin`.
+  The app looks for `gamdl` and `uv` in `~/.local/bin`, `/opt/homebrew/bin` and `/usr/local/bin`.
 - An Apple Music subscription
 
 ## Build

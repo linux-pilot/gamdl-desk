@@ -5,7 +5,7 @@ import AppKit
 /// write commands to that file, then `kill -USR1 <pid>`. One command per line:
 ///   size <w> <h> | input <text, \n for newlines> | lines <fake gamdl output, \n separated>
 ///   download | stop | signin (see `authCommandSignIn`) | refresh | tab activity|log
-///   options on|off | prefs <DownloadOptions JSON> | scroll <y> | dark | light | snap <png path>
+///   options on|off | setup on|off | prefs <DownloadOptions JSON> | scroll <y> | dark | light | snap <png path>
 /// Snapshots are taken by the app itself, so they need no screen-recording permission.
 @MainActor
 enum DebugDriver {
@@ -13,21 +13,21 @@ enum DebugDriver {
     static let downloadNotification = Notification.Name("DebugDriver.download")
     private static var source: DispatchSourceSignal?
 
-    static func install(controller: DownloadController) {
+    static func install(controller: DownloadController, setup: SetupController) {
         guard let path = ProcessInfo.processInfo.environment["GAMDL_DESK_DRIVER"] else { return }
         signal(SIGUSR1, SIG_IGN)
         let s = DispatchSource.makeSignalSource(signal: SIGUSR1, queue: .main)
         s.setEventHandler {
             MainActor.assumeIsolated {
                 let text = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
-                run(text.split(separator: "\n").map(String.init), controller: controller)
+                run(text.split(separator: "\n").map(String.init), controller: controller, setup: setup)
             }
         }
         s.resume()
         source = s
     }
 
-    private static func run(_ commands: [String], controller: DownloadController) {
+    private static func run(_ commands: [String], controller: DownloadController, setup: SetupController) {
         guard let command = commands.first else { return }
         let rest = Array(commands.dropFirst())
         let parts = command.split(separator: " ", maxSplits: 1).map(String.init)
@@ -47,6 +47,7 @@ enum DebugDriver {
         case "prefs": UserDefaults.standard.set(arg, forKey: SettingsKey.downloadOptions)
         case "lines": controller.debugInject(arg.components(separatedBy: "\\n"))
         case "tab": UserDefaults.standard.set((arg == "log" ? ResultsTab.log : .activity).rawValue, forKey: SettingsKey.resultsTab)
+        case "setup": setup.isPresented = arg == "on"
         case "options": UserDefaults.standard.set(arg == "on", forKey: SettingsKey.showOptions)
         case "scroll": // scroll the rightmost scroll view (the Options inspector) to y points from the top
             if let root = window?.contentView {
@@ -60,7 +61,8 @@ enum DebugDriver {
         case "light": NSApp.appearance = NSAppearance(named: .aqua)
         case "wait": delay = Double(arg) ?? 1
         case "snap":
-            if let frame = window?.contentView?.superview {
+            // The Setup sheet, when it's open, rather than the window behind it.
+            if let frame = (window?.attachedSheet ?? window)?.contentView?.superview {
                 frame.layoutSubtreeIfNeeded()
                 if let rep = frame.bitmapImageRepForCachingDisplay(in: frame.bounds) {
                     frame.cacheDisplay(in: frame.bounds, to: rep)
@@ -71,7 +73,7 @@ enum DebugDriver {
         default: break
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-            MainActor.assumeIsolated { run(rest, controller: controller) }
+            MainActor.assumeIsolated { run(rest, controller: controller, setup: setup) }
         }
     }
 

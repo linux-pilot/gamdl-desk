@@ -14,6 +14,7 @@ enum SettingsKey {
 
 struct ContentView: View {
     let controller: DownloadController
+    @Bindable var setup: SetupController
 
     @AppStorage(SettingsKey.downloadOptions) private var options = DownloadOptions()
     @AppStorage(SettingsKey.showOptions) private var showOptions = true
@@ -24,7 +25,9 @@ struct ContentView: View {
     private var plan: (inputs: [String], skippedVideos: Int) { options.inputsToDownload(parsed.valid) }
 
     private var blockingReason: String? {
-        if controller.gamdlPath == nil { return "gamdl isn't installed." }
+        if controller.gamdlPath == nil { return "gamdl isn't installed. Open Setup to install it." }
+        if setup.isRunning { return "Wait for Setup to finish installing." }
+        if controller.gamdlIsOutdated { return "gamdl \(controller.gamdlVersion ?? "") is too old. Open Setup to update it." }
         if parsed.valid.isEmpty { return "Paste at least one Apple Music link." }
         if plan.inputs.isEmpty { return "These are all music-video links, and music videos are turned off in Options." }
         return options.blockingIssue()
@@ -49,6 +52,7 @@ struct ContentView: View {
                 .inspectorColumnWidth(min: 280, ideal: 320, max: 440)
         }
         .toolbar { toolbar }
+        .sheet(isPresented: $setup.isPresented) { SetupView(setup: setup) }
         #if DEBUG
         .onReceive(NotificationCenter.default.publisher(for: DebugDriver.inputNotification)) { input = $0.object as? String ?? "" }
         .onReceive(NotificationCenter.default.publisher(for: DebugDriver.downloadNotification)) { _ in download() }
@@ -100,12 +104,14 @@ struct ContentView: View {
     // MARK: Banners
 
     @ViewBuilder private var banners: some View {
-        if controller.gamdlPath == nil {
+        if controller.gamdlPath == nil || controller.gamdlIsOutdated {
             Banner(systemImage: "exclamationmark.triangle.fill", tint: .orange,
-                   title: "gamdl isn't installed",
-                   message: "Install it in Terminal with:  \(Gamdl.installCommand)") {
-                Button("Copy Command") { copy(Gamdl.installCommand) }
-                Button("Check Again") { controller.locateGamdl() }
+                   title: controller.gamdlPath == nil ? "gamdl isn't installed" : "gamdl needs an update",
+                   message: controller.gamdlPath == nil
+                       ? "Setup installs it, along with what it needs."
+                       : "Gamdl Desk needs gamdl \(Gamdl.minimumMajorVersion) or later. Setup can update it.") {
+                Button("Open Setup…") { setup.isPresented = true }
+                Button("Check Again") { setup.checkAgain() }
             }
         } else if controller.showsBanner(for: .losslessRefused) {
             Banner(systemImage: "waveform.badge.exclamationmark", tint: .orange,
