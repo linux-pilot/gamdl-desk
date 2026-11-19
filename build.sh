@@ -1,11 +1,15 @@
 #!/bin/zsh
-# Builds "Gamdl Desk.app" next to this script. Usage: ./build.sh  (then drag it to /Applications)
+# Builds "Gamdl Desk.app" (universal: Apple silicon + Intel) next to this script.
+# Usage: ./build.sh          then drag the app to /Applications
+#        ./build.sh --dmg    also packages "GamdlDesk-<version>.dmg" for a release
 set -euo pipefail
 cd "${0:A:h}"
 APP="Gamdl Desk.app"
+VERSION=1.0.0
 
-swift build -c release --product GamdlDesk
-BIN="$(swift build -c release --show-bin-path)/GamdlDesk"
+BUILD_ARGS=(-c release --arch arm64 --arch x86_64)
+swift build "${BUILD_ARGS[@]}" --product GamdlDesk
+BIN="$(swift build "${BUILD_ARGS[@]}" --show-bin-path)/GamdlDesk"
 
 # App icon, regenerated only when the logo changes.
 ICNS=.build/AppIcon.icns
@@ -17,7 +21,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/GamdlDesk"
 cp "$ICNS" "$APP/Contents/Resources/AppIcon.icns"
-cat > "$APP/Contents/Info.plist" <<'PLIST'
+cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
@@ -27,8 +31,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundleExecutable</key><string>GamdlDesk</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>1.1</string>
-  <key>CFBundleVersion</key><string>2</string>
+  <key>CFBundleShortVersionString</key><string>$VERSION</string>
+  <key>CFBundleVersion</key><string>$VERSION</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.music</string>
   <key>NSHighResolutionCapable</key><true/>
@@ -36,3 +40,14 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 PLIST
 codesign --force --sign - "$APP"
 echo "Built $PWD/$APP"
+
+if [[ ${1:-} == --dmg ]]; then
+  DMG="GamdlDesk-$VERSION.dmg"
+  STAGE=.build/dmg
+  rm -rf "$STAGE" "$DMG"
+  mkdir -p "$STAGE"
+  cp -R "$APP" "$STAGE/"
+  ln -s /Applications "$STAGE/Applications"
+  hdiutil create -volname "Gamdl Desk" -srcfolder "$STAGE" -format UDZO -ov "$DMG" >/dev/null
+  echo "Packaged $PWD/$DMG"
+fi
