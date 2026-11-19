@@ -43,3 +43,7 @@ Settings are remembered between launches. Anything not exposed here can be set i
 ## Credits
 
 All downloading is done by [gamdl](https://github.com/glomatico/gamdl) by glomatico. This app only builds the command line and shows its output.
+
+## License
+
+[MIT](LICENSE)
