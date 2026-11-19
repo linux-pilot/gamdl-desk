@@ -29,7 +29,7 @@ import Testing
     }
 
     func run(_ script: String, stopAfter: TimeInterval? = nil, grace: TimeInterval = 0.5,
-             timeout: TimeInterval = 10) throws -> (Recorder, TimeInterval, CommandRunner) {
+             timeout: TimeInterval = 10) throws -> (Recorder, TimeInterval) {
         let rec = Recorder()
         let r = CommandRunner(executable: URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", script],
                               deliveryQueue: DispatchQueue(label: "test.delivery"), stopGrace: grace,
@@ -41,18 +41,18 @@ import Testing
             r.stop()
         }
         #expect(rec.done.wait(timeout: .now() + timeout) == .success, "runner never finished")
-        return (rec, Date().timeIntervalSince(start), r)
+        return (rec, Date().timeIntervalSince(start))
     }
 
     @Test func streamsStdoutAndStderrInOrderThenFinishes() throws {
-        let (rec, _, _) = try run("printf 'one\\n'; printf 'two ✓\\n' >&2; printf 'no newline at end'; exit 3")
+        let (rec, _) = try run("printf 'one\\n'; printf 'two ✓\\n' >&2; printf 'no newline at end'; exit 3")
         #expect(rec.lines == ["one", "two ✓", "no newline at end"])
         #expect(rec.termination == .init(status: 3, signaled: false, stoppedByUser: false))
         #expect(rec.linesAfterFinish == 0)
     }
 
     @Test func manyLinesAreAllDeliveredBeforeFinished() throws {
-        let (rec, _, _) = try run("i=0; while [ $i -lt 5000 ]; do echo \"line $i ✓\"; i=$((i+1)); done")
+        let (rec, _) = try run("i=0; while [ $i -lt 5000 ]; do echo \"line $i ✓\"; i=$((i+1)); done")
         #expect(rec.lines.count == 5000)
         #expect(rec.lines.last == "line 4999 ✓")
         #expect(rec.termination?.succeeded == true)
@@ -60,21 +60,21 @@ import Testing
     }
 
     @Test func stdinIsClosedSoPromptsFailFast() throws {
-        let (rec, elapsed, _) = try run("read answer; echo \"got:$answer\"")
+        let (rec, elapsed) = try run("read answer; echo \"got:$answer\"")
         #expect(rec.lines == ["got:"])
         #expect(elapsed < 5)
     }
 
     @Test func stopInterruptsWithSIGINT() throws {
-        let (rec, elapsed, _) = try run("echo started; sleep 30", stopAfter: 0.3)
+        // exec, so SIGINT reaches sleep itself (sh defers it until a foreground child exits).
+        let (rec, elapsed) = try run("echo started; exec sleep 30", stopAfter: 0.3, grace: 2)
         #expect(rec.lines == ["started"])
-        #expect(rec.termination?.stoppedByUser == true)
-        #expect(rec.termination?.succeeded == false)
-        #expect(elapsed < 3)
+        #expect(rec.termination == .init(status: SIGINT, signaled: true, stoppedByUser: true))
+        #expect(elapsed < 2)
     }
 
     @Test func stopEscalatesWhenSIGINTAndSIGTERMAreIgnored() throws {
-        let (rec, elapsed, _) = try run("trap '' INT TERM; echo stubborn; while :; do sleep 0.05; done",
+        let (rec, elapsed) = try run("trap '' INT TERM; echo stubborn; while :; do sleep 0.05; done",
                                         stopAfter: 0.3, grace: 0.4)
         #expect(rec.lines == ["stubborn"])
         #expect(rec.termination == .init(status: SIGKILL, signaled: true, stoppedByUser: true))
@@ -83,7 +83,7 @@ import Testing
 
     @Test func finishesEvenIfAGrandchildKeepsTheOutputOpen() throws {
         // The shell exits at once, but the background sleep inherits stdout and holds the pipe open.
-        let (rec, elapsed, _) = try run("echo parent; sleep 20 & exit 0")
+        let (rec, elapsed) = try run("echo parent; sleep 20 & exit 0")
         #expect(rec.lines == ["parent"])
         #expect(rec.termination?.succeeded == true)
         #expect(elapsed < 5)

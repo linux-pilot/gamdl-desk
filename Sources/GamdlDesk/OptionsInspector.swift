@@ -7,20 +7,10 @@ struct OptionsInspector: View {
     @Binding var options: DownloadOptions
     let controller: DownloadController
 
-    private var cookiesMissing: Bool {
-        !options.cookiesPath.trimmingCharacters(in: .whitespaces).isEmpty
-            && !FileManager.default.fileExists(atPath: options.expandedCookiesPath)
-    }
-
     private var signInButtonTitle: String {
         if controller.signInFlow == .waiting { return "Waiting for Terminal…" }
-        if case .mode = controller.savedAuth, !controller.needsSignIn { return "Sign In Again…" }
+        if case .mode = controller.savedAuth, !controller.issues.contains(.signInRejected) { return "Sign In Again…" }
         return "Sign In with Terminal…"
-    }
-
-    /// gamdl will sign in through Wrapper: it's the saved method and no cookies file overrides it.
-    private var usesWrapper: Bool {
-        controller.savedAuth == .mode("wrapper") && options.cookiesPath.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
     var body: some View {
@@ -34,10 +24,10 @@ struct OptionsInspector: View {
             FolderLayoutSection(options: $options)
 
             Section {
-                SignInStatus(controller: controller, usesCookiesFile: !options.cookiesPath.trimmingCharacters(in: .whitespaces).isEmpty)
+                SignInStatus(controller: controller, usesCookiesFile: options.cookiesFile != nil)
                 PathField(title: "Cookies file", path: $options.cookiesPath, directory: false,
                           placeholder: "Optional", allowsClear: true)
-                if cookiesMissing {
+                if options.cookiesFileIsMissing() {
                     Label("This file doesn't exist.", systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.red)
                         .font(.caption)
@@ -52,21 +42,21 @@ struct OptionsInspector: View {
 
             Section("Songs") {
                 Picker("Codec", selection: $options.songCodec) {
-                    ForEach(DownloadOptions.songCodecs, id: \.self) { Text(DownloadOptions.songCodecLabel($0)).tag($0) }
+                    ForEach(SongCodec.allCases, id: \.self) { Text($0.label).tag($0) }
                 }
-                if options.songCodecNeedsWrapper && !usesWrapper {
+                if options.songCodec.needsWrapper && !options.usesWrapper(savedAuth: controller.savedAuth) {
                     VStack(alignment: .leading, spacing: 4) {
                         Label("Lossless only works when gamdl signs in through Wrapper v2. With cookies, Apple refuses the key and every song fails.",
                               systemImage: "exclamationmark.triangle.fill")
                             .foregroundStyle(.orange)
                             .fixedSize(horizontal: false, vertical: true)
-                        Link("How to set up Wrapper v2", destination: DownloadController.wrapperURL)
+                        Link("How to set up Wrapper v2", destination: Gamdl.wrapperURL)
                     }
                     .font(.caption)
                 }
                 Toggle("Save lyrics file", isOn: $options.saveLyrics)
                 Picker("Lyrics format", selection: $options.lyricsFormat) {
-                    ForEach(DownloadOptions.lyricsFormats, id: \.self) { Text($0) }
+                    ForEach(LyricsFormat.allCases, id: \.self) { Text($0.rawValue) }
                 }
                 .disabled(!options.saveLyrics)
             }
@@ -75,10 +65,10 @@ struct OptionsInspector: View {
                 Toggle("Download music videos", isOn: $options.downloadMusicVideos)
                 Group {
                     Picker("Codec", selection: $options.mvCodec) {
-                        ForEach(DownloadOptions.mvCodecs, id: \.self) { Text($0) }
+                        ForEach(MusicVideoCodec.allCases, id: \.self) { Text($0.rawValue) }
                     }
                     Picker("Container", selection: $options.mvContainer) {
-                        ForEach(DownloadOptions.mvContainers, id: \.self) { Text($0) }
+                        ForEach(MusicVideoContainer.allCases, id: \.self) { Text($0.rawValue) }
                     }
                     Picker("Max height", selection: $options.maxHeight) {
                         ForEach(DownloadOptions.maxHeights, id: \.self) { Text("\($0)p").tag($0) }
@@ -97,7 +87,7 @@ struct OptionsInspector: View {
                 Picker("Download", selection: Binding(
                     get: { options.effectiveArtistSelection },
                     set: { options.artistSelection = $0 })) {
-                    ForEach(options.availableArtistSelections, id: \.value) { Text($0.label).tag($0.value) }
+                    ForEach(options.availableArtistSelections, id: \.self) { Text($0.label).tag($0) }
                 }
             } header: {
                 Text("Artist links")
@@ -108,7 +98,7 @@ struct OptionsInspector: View {
             Section("Files") {
                 Toggle("Save cover art file", isOn: $options.saveCover)
                 Picker("Cover format", selection: $options.coverFormat) {
-                    ForEach(DownloadOptions.coverFormats, id: \.self) { Text($0) }
+                    ForEach(CoverFormat.allCases, id: \.self) { Text($0.rawValue) }
                 }
                 Toggle("Save playlist (.m3u)", isOn: $options.savePlaylist)
                 Toggle("Overwrite existing files", isOn: $options.overwrite)
@@ -126,7 +116,7 @@ struct OptionsInspector: View {
                 HStack {
                     Button("Reset to Defaults") { options = DownloadOptions() }
                     Spacer()
-                    let config = "\(NSHomeDirectory())/.gamdl/config.yml"
+                    let config = Gamdl.configPath
                     if FileManager.default.fileExists(atPath: config) {
                         Button("Open gamdl Config") {
                             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: config)])
@@ -221,7 +211,7 @@ struct SignInStatus: View {
             Label("gamdl isn't installed", systemImage: "xmark.circle.fill").foregroundStyle(.secondary)
         } else if controller.signInFlow == .waiting {
             Label("Signing in in Terminal…", systemImage: "terminal").foregroundStyle(.secondary)
-        } else if controller.needsSignIn, usesCookiesFile || controller.savedAuth != SavedAuth.none {
+        } else if controller.issues.contains(.signInRejected), usesCookiesFile || controller.savedAuth != SavedAuth.none {
             Label(usesCookiesFile ? "The cookies file was rejected" : "The saved sign-in was rejected",
                   systemImage: "exclamationmark.triangle.fill")
                 .foregroundStyle(.orange)
@@ -243,40 +233,18 @@ struct SignInStatus: View {
     }
 }
 
-/// Folder layout, file naming and name length, with a live preview of where files will go.
 struct FolderLayoutSection: View {
     @Binding var options: DownloadOptions
     @State private var showFields = false
 
     var body: some View {
         Section {
-            Picker("Folders", selection: $options.folderLayout) {
-                ForEach(FolderLayout.allCases.filter { $0 != .custom }, id: \.self) { Text($0.label).tag($0) }
-                Divider()
-                Text(FolderLayout.custom.label).tag(FolderLayout.custom)
-            }
-            if options.folderLayout == .custom {
-                TemplateField(title: "Album folder", text: $options.customTemplates.albumFolder)
-                TemplateField(title: "Compilation folder", text: $options.customTemplates.compilationFolder)
-                TemplateField(title: "Songs without an album, and videos", text: $options.customTemplates.noAlbumFolder)
-                TemplateField(title: "Playlist file folder", text: $options.customTemplates.playlistFolder)
-            }
-
-            Picker("File names", selection: $options.fileNaming) {
-                ForEach(FileNaming.allCases.filter { $0 != .custom }, id: \.self) { Text($0.label).tag($0) }
-                Divider()
-                Text(FileNaming.custom.label).tag(FileNaming.custom)
-            }
-            if options.fileNaming == .custom {
-                TemplateField(title: "Album track", text: $options.customTemplates.singleDiscFile)
-                TemplateField(title: "Track on a multi-disc album", text: $options.customTemplates.multiDiscFile)
-                TemplateField(title: "Song without an album, or video", text: $options.customTemplates.noAlbumFile)
-                TemplateField(title: "Playlist file", text: $options.customTemplates.playlistFile)
-            }
+            PresetPicker(title: "Folders", selection: $options.folderLayout, custom: $options.customTemplates)
+            PresetPicker(title: "File names", selection: $options.fileNaming, custom: $options.customTemplates)
 
             Toggle("Limit name length", isOn: Binding(
                 get: { options.maxNameLength > 0 },
-                set: { options.maxNameLength = $0 ? 120 : 0 }))
+                set: { options.maxNameLength = $0 ? DownloadOptions.suggestedNameLength : 0 }))
             if options.maxNameLength > 0 {
                 Stepper(value: $options.maxNameLength, in: DownloadOptions.nameLengthRange, step: 10) {
                     LabeledContent("Longest name", value: "\(options.maxNameLength) bytes")
@@ -298,24 +266,6 @@ struct FolderLayoutSection: View {
                 Footnote(options.folderLayout == .flat
                     ? "Everything is saved directly in the output folder."
                     : "Use / in a template to make subfolders.")
-            }
-        }
-        .onChange(of: options.folderLayout) { old, new in
-            // Start a custom layout from the preset that was selected, so it's easy to tweak,
-            // unless there are custom folder templates already (never overwrite your edits).
-            let d = PathTemplates(), c = options.customTemplates
-            let untouched = (c.albumFolder, c.compilationFolder, c.noAlbumFolder) == (d.albumFolder, d.compilationFolder, d.noAlbumFolder)
-            if new == .custom, untouched, let f = old.folders {
-                (options.customTemplates.albumFolder, options.customTemplates.compilationFolder,
-                 options.customTemplates.noAlbumFolder) = f
-            }
-        }
-        .onChange(of: options.fileNaming) { old, new in
-            let d = PathTemplates(), c = options.customTemplates
-            let untouched = (c.singleDiscFile, c.multiDiscFile, c.noAlbumFile) == (d.singleDiscFile, d.multiDiscFile, d.noAlbumFile)
-            if new == .custom, untouched, let f = old.files {
-                (options.customTemplates.singleDiscFile, options.customTemplates.multiDiscFile,
-                 options.customTemplates.noAlbumFile) = f
             }
         }
     }
@@ -344,17 +294,33 @@ struct FolderLayoutSection: View {
         .accessibilityElement(children: .combine)
     }
 
-    static let fieldHelp = """
-    `{album}` `{album_artist}` `{artist}` `{title}` `{composer}` `{date}` `{track}` `{track_total}` \
-    `{disc}` `{disc_total}` `{media_type}` `{playlist_title}` `{playlist_artist}` `{playlist_track}` \
-    `{album_id}` `{artist_id}` `{title_id}` `{composer_id}` `{playlist_id}`
+    static let fieldHelp = PathTemplate.fields.map { "`{\($0)}`" }.joined(separator: " ") + """
 
     Formats: `{track:02d}` → 01, `{date:%Y}` → 1969, `{title:.30}` → first 30 characters. \
     Write `{{` or `}}` for a literal brace. Characters like : and / inside values become _.
     """
 }
 
-/// A monospaced template field that shows what's wrong with the template, if anything.
+/// Picks a preset for one group of templates; Custom shows a field per template.
+struct PresetPicker<Preset: PathPreset>: View {
+    let title: String
+    @Binding var selection: Preset
+    @Binding var custom: PathTemplates
+
+    var body: some View {
+        Picker(title, selection: $selection) {
+            ForEach(Preset.presets, id: \.self) { Text($0.label).tag($0) }
+            Divider()
+            Text(Preset.custom.label).tag(Preset.custom)
+        }
+        if selection == Preset.custom {
+            ForEach(Preset.slots, id: \.self) { slot in
+                TemplateField(title: slot.title, text: $custom[slot])
+            }
+        }
+    }
+}
+
 struct TemplateField: View {
     let title: String
     @Binding var text: String

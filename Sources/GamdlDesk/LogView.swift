@@ -42,16 +42,11 @@ struct LogView: NSViewRepresentable {
         let attrs: [NSAttributedString.Key: Any] = [.font: tv.font as Any, .foregroundColor: NSColor.labelColor]
         let newCount = total - c.shown
 
-        if generation != c.generation || newCount < 0 || newCount > lines.count {
-            // Cleared, or more arrived than we still hold: rebuild from what the store has.
+        if generation != c.generation {
             storage.setAttributedString(NSAttributedString(string: lines.joined(separator: "\n"), attributes: attrs))
         } else if newCount > 0 {
             let text = (storage.length > 0 ? "\n" : "") + lines.suffix(newCount).joined(separator: "\n")
             storage.append(NSAttributedString(string: text, attributes: attrs))
-            // Keep the view in step with the store's cap.
-            if storage.length > 3_000_000 {
-                storage.setAttributedString(NSAttributedString(string: lines.joined(separator: "\n"), attributes: attrs))
-            }
         }
         c.generation = generation
         c.shown = total

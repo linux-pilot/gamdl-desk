@@ -71,15 +71,12 @@ import Testing
         o.saveCover = true
         o.savePlaylist = true
         o.overwrite = true
-        o.concurrentDownloads = 99
         let args = o.arguments(inputs: ["USUM71703861"])
         let home = NSHomeDirectory()
         #expect(args.contains("\(home)/Music/x"))
         #expect(args.contains("--no-lyrics-file") && !args.contains("--lyrics-file-format"))
         #expect(args.contains("--save-cover") && args.contains("--save-playlist") && args.contains("--overwrite"))
         #expect(Array(args.suffix(6)) == ["--auth-mode", "cookies", "--cookies-path", "\(home)/cookies.txt", "--", "USUM71703861"])
-        let i = args.firstIndex(of: "--concurrent-downloads")!
-        #expect(args[i + 1] == "8")
     }
 
     @Test func blockingIssues() {
@@ -92,21 +89,55 @@ import Testing
         #expect(o.blockingIssue(fileExists: { _ in true }) == "Choose an output folder.")
     }
 
-    @Test func persistenceRoundTripAndForwardCompatibility() {
-        var o = DownloadOptions()
-        o.songCodec = "alac"
-        o.maxHeight = 2160
-        o.artistSelection = "top-songs"
-        #expect(DownloadOptions(rawValue: o.rawValue) == o)
+    /// Every stored setting, as text, by name. DownloadOptions' `==` compares encoded JSON, so it
+    /// can't see a setting that encoding leaves out.
+    static func fields(_ o: DownloadOptions) -> [String: String] {
+        Dictionary(uniqueKeysWithValues: Mirror(reflecting: o).children.map { child in
+            let text = (child.value as? PathTemplates).map { t in "\(PathTemplates.Slot.allCases.map { t[$0] })" }
+            return (child.label!, text ?? "\(child.value)")
+        })
+    }
 
-        // Older settings without newer keys, plus values gamdl no longer accepts, fall back to defaults.
-        let legacy = DownloadOptions(rawValue: #"{"songCodec":"atmos","maxHeight":123,"coverFormat":"gif","overwrite":true}"#)!
-        #expect(legacy.songCodec == "atmos")
-        #expect(legacy.maxHeight == 1080)
-        #expect(legacy.coverFormat == "jpg")
-        #expect(legacy.overwrite)
-        #expect(legacy.artistSelection == "all-albums")
+    @Test func everySettingSurvivesARoundTrip() {
+        var o = DownloadOptions()
+        o.outputDir = "/x"; o.cookiesPath = "/c.txt"; o.songCodec = .alac; o.saveLyrics = false
+        o.lyricsFormat = .ttml; o.mvCodec = .h265; o.mvContainer = .mp4; o.maxHeight = 2160
+        o.saveCover = true; o.coverFormat = .png; o.savePlaylist = true; o.overwrite = true
+        o.artistSelection = .topSongs; o.concurrentDownloads = 5; o.downloadMusicVideos = false
+        o.folderLayout = .flat; o.fileNaming = .custom; o.customTemplates[.playlistFile] = "{playlist_title} x"
+        o.maxNameLength = 120
+        let defaults = Self.fields(DownloadOptions())
+        // A new setting must be added here (and to DownloadOptions' CodingKeys).
+        for (name, value) in Self.fields(o) { #expect(value != defaults[name], "\(name) still has its default") }
+        #expect(Self.fields(DownloadOptions(rawValue: o.rawValue)!) == Self.fields(o))
+    }
+
+    @Test func oldOrInvalidSettingsFallBackToDefaults() {
+        let old = DownloadOptions(rawValue: #"""
+            {"songCodec":"atmos","maxHeight":123,"coverFormat":"gif","overwrite":true,"concurrentDownloads":99,
+             "folderLayout":"bogus","maxNameLength":7,"customTemplates":{"albumFolder":"X"}}
+            """#)!
+        #expect(old.songCodec == .atmos && old.overwrite)
+        #expect(old.maxHeight == 1080 && old.coverFormat == .jpg && old.folderLayout == .artistAlbum)
+        #expect(old.concurrentDownloads == 8 && old.maxNameLength == 40)
+        #expect(old.customTemplates[.albumFolder] == "X" && old.customTemplates[.singleDiscFile] == "{track:02d} {title}")
+        #expect(Self.fields(DownloadOptions(rawValue: "{}")!) == Self.fields(DownloadOptions()))
         #expect(DownloadOptions(rawValue: "not json") == nil)
+    }
+
+    @Test func aCookiesFileOverridesTheSavedWrapperSignIn() {
+        var o = DownloadOptions()
+        #expect(o.usesWrapper(savedAuth: .mode("wrapper")))
+        #expect(!o.usesWrapper(savedAuth: .mode("cookies")) && !o.usesWrapper(savedAuth: nil))
+        o.cookiesPath = "~/cookies.txt"
+        #expect(!o.usesWrapper(savedAuth: .mode("wrapper")))
+    }
+
+    @Test func shellQuotingOnlyWhereNeeded() {
+        #expect(Shell.quoted("/usr/bin/gamdl") == "/usr/bin/gamdl")
+        #expect(Shell.quoted("a b") == "'a b'")
+        #expect(Shell.quoted("it's") == #"'it'\''s'"#)
+        #expect(Shell.quoted("") == "''")
     }
 }
 
@@ -159,9 +190,9 @@ import Testing
     }
 
     @Test func detectsSignInProblems() {
-        #expect(OutputEvent.indicatesSignInProblem("  ✗ Session: Authentication setup requires an interactive terminal"))
-        #expect(OutputEvent.indicatesSignInProblem("✗ Session: Authentication failed (check cookies or wrapper login)"))
-        #expect(!OutputEvent.indicatesSignInProblem("✓ Authentication Song: downloaded"))
+        #expect(RunIssue.detect(in: "  ✗ Session: Authentication setup requires an interactive terminal", songCodec: .aac) == .signInRejected)
+        #expect(RunIssue.detect(in: "✗ Session: Authentication failed (check cookies or wrapper login)", songCodec: .aac) == .signInRejected)
+        #expect(RunIssue.detect(in: "✓ Authentication Song: downloaded", songCodec: .aac) == nil)
     }
 }
 
@@ -243,7 +274,7 @@ import Testing
         #expect(args[args.firstIndex(of: "--album-folder-template")! + 1] == "gamdl")
         #expect(o.pathIssue == nil)
         // Braces in the folder name are escaped so gamdl renders them literally.
-        #expect(options(.flat, .title, dir: "/OUT/my {music}").resolvedPaths.templates.albumFolder == "my {{music}}")
+        #expect(options(.flat, .title, dir: "/OUT/my {music}").resolvedPaths.templates[.albumFolder] == "my {{music}}")
     }
 
     @Test func flatRejectsFolderNamesGamdlWouldChange() {
@@ -256,9 +287,9 @@ import Testing
 
     @Test func customTemplatesWithFormatSpecs() {
         var c = PathTemplates()
-        c.albumFolder = "{album_artist:.3}/{date:%y-%m}"
-        c.singleDiscFile = "{track:3} {title} [{track_total}] {composer}"
-        c.multiDiscFile = "{disc:02d}.{track} {title:>5}"
+        c[.albumFolder] = "{album_artist:.3}/{date:%y-%m}"
+        c[.singleDiscFile] = "{track:3} {title} [{track_total}] {composer}"
+        c[.multiDiscFile] = "{disc:02d}.{track} {title:>5}"
         #expect(preview(options(.custom, .custom, custom: c)) == [
             "/OUT/The/69-09/1 Come Together [17] John Lennon.m4a",
             "/OUT/The/68-11/02.1 Birthday.m4a",
@@ -268,19 +299,19 @@ import Testing
 
     @Test func cleansNamesLikeGamdl() {
         var c = PathTemplates()
-        c.albumFolder = ".hidden/A: B {{x}}"
-        c.singleDiscFile = "{title}."
+        c[.albumFolder] = ".hidden/A: B {{x}}"
+        c[.singleDiscFile] = "{title}."
         #expect(preview(options(.custom, .custom, custom: c)).prefix(2) == [
             "/OUT/_hidden/A_ B {x}/Come Together_.m4a", "/OUT/_hidden/A_ B {x}/2-01 Birthday.m4a"])
     }
 
     @Test func truncatesNamesIncludingExtension() {
         var c = PathTemplates()
-        c.singleDiscFile = "{track:02d} {title} {title} {title}"
+        c[.singleDiscFile] = "{track:02d} {title} {title} {title}"
         let o = options(.artistAlbum, .custom, custom: c, truncate: 40)
         #expect(o.arguments(inputs: []).contains("--truncate"))
         // gamdl with --truncate 20 gave these; 20 is below the app's minimum of 40, so render directly.
-        #expect(PathTemplate.render(c.singleDiscFile, values: ["track": .number(1), "title": .text("Come Together")],
+        #expect(PathTemplate.render(c[.singleDiscFile], values: ["track": .number(1), "title": .text("Come Together")],
                                     fileExtension: ".m4a", truncate: 20) == ["01 Come Together.m4a"])
         #expect(PathTemplate.render("{album}", values: ["album": .text("The Beatles (White Album)")], truncate: 20)
                 == ["The Beatles (White A"])
@@ -298,49 +329,35 @@ import Testing
         #expect(PathTemplate.problem(in: "") != nil)
         #expect(PathTemplate.problem(in: "{album_artist}/{date:%Y} - {album} {{live}}") == nil)
         var c = PathTemplates()
-        c.multiDiscFile = "{disc}-{nope}"
-        #expect(options(.artistAlbum, .custom, custom: c).pathIssue == "Multi-disc file template: {nope} isn't a field gamdl knows.")
+        c[.multiDiscFile] = "{disc}-{nope}"
+        #expect(options(.artistAlbum, .custom, custom: c).pathIssue == "Track on a multi-disc album: {nope} isn't a field gamdl knows.")
         // A broken custom folder template doesn't matter while a preset is selected for folders.
-        c = PathTemplates(); c.albumFolder = "{bad}"
+        c = PathTemplates(); c[.albumFolder] = "{bad}"
         #expect(options(.artistAlbum, .trackTitle, custom: c).pathIssue == nil)
     }
 
-    @Test func templatesAreAlwaysPassedToGamdl() {
-        let args = DownloadOptions().arguments(inputs: ["x"])
-        for flag in PathTemplates().arguments where flag.hasPrefix("--") { #expect(args.contains(flag)) }
-        #expect(!args.contains("--truncate"))
-        #expect(args.last == "x" && args[args.count - 2] == "--")
-    }
-
-    @Test func persistsLayoutChoices() {
+    @Test func customStartsFromThePreviousPresetUnlessAlreadyEdited() {
         var o = DownloadOptions()
+        o.folderLayout = .artistDashAlbum
         o.folderLayout = .custom
-        o.fileNaming = .artistTitle
-        o.customTemplates.albumFolder = "{artist}/{album}"
-        o.maxNameLength = 120
-        #expect(DownloadOptions(rawValue: o.rawValue) == o)
-        let old = DownloadOptions(rawValue: #"{"folderLayout":"bogus","maxNameLength":7,"customTemplates":{"albumFolder":"X"}}"#)!
-        #expect(old.folderLayout == .artistAlbum)
-        #expect(old.maxNameLength == 40)
-        #expect(old.customTemplates.albumFolder == "X" && old.customTemplates.singleDiscFile == "{track:02d} {title}")
+        #expect(o.customTemplates[.albumFolder] == "{album_artist} - {album}")
+        o.folderLayout = .albumOnly
+        o.folderLayout = .custom
+        #expect(o.customTemplates[.albumFolder] == "{album_artist} - {album}")
+        o.fileNaming = .title
+        o.fileNaming = .custom
+        #expect(o.customTemplates[.singleDiscFile] == "{title}")
+        #expect(o.resolvedPaths.templates[.singleDiscFile] == "{title}")
     }
 }
 
 @Suite struct CodecTests {
-    @Test func everyCodecHasALabelAndOnlyALACNeedsWrapper() {
-        for codec in DownloadOptions.songCodecs {
-            #expect(DownloadOptions.songCodecLabel(codec) != codec)
-            var o = DownloadOptions()
-            o.songCodec = codec
-            #expect(o.songCodecNeedsWrapper == codec.hasPrefix("alac"))
-            #expect(DownloadOptions.songCodecLabel(codec).contains("Wrapper") == o.songCodecNeedsWrapper)
-        }
-    }
-
-    @Test func detectsLicenseRefusal() {
+    @Test func licenseRefusalMeansLosslessNeedsWrapperOnlyForALAC() {
         // Exact line from gamdl 4.0.2 when ALAC is requested with cookies sign-in.
-        #expect(OutputEvent.indicatesLicenseRefusal("  ✗ Come Together (2019 Mix): Unable to acquire or process decryption key (DrmLicenseError)"))
-        #expect(!OutputEvent.indicatesLicenseRefusal("✓ Come Together: downloaded"))
+        let refusal = "  ✗ Come Together (2019 Mix): Unable to acquire or process decryption key (DrmLicenseError)"
+        #expect(RunIssue.detect(in: refusal, songCodec: .alacLossless) == .losslessRefused)
+        #expect(RunIssue.detect(in: refusal, songCodec: .aac) == nil)
+        #expect(RunIssue.detect(in: "✓ Come Together: downloaded", songCodec: .alac) == nil)
     }
 }
 
@@ -369,26 +386,20 @@ import Testing
         let plan = o.inputsToDownload(links)
         #expect(plan.inputs == [links[0], links[2], links[3]])
         #expect(plan.skippedVideos == 1)
-        for choice in ["music-videos", "all"] {
+        #expect(Array(o.arguments(inputs: links).drop { $0 != "--" }.dropFirst()) == plan.inputs)
+        for choice in [ArtistSelection.musicVideos, .all] {
             o.artistSelection = choice
-            #expect(o.effectiveArtistSelection == "all-albums")
+            #expect(o.effectiveArtistSelection == .allAlbums)
             let args = o.arguments(inputs: plan.inputs)
             #expect(args[args.firstIndex(of: "--artist-auto-select")! + 1] == "all-albums")
         }
-        o.artistSelection = "top-songs"
-        #expect(o.effectiveArtistSelection == "top-songs")
-        #expect(!o.availableArtistSelections.contains { $0.value == "music-videos" || $0.value == "all" })
+        o.artistSelection = .topSongs
+        #expect(o.effectiveArtistSelection == .topSongs)
+        #expect(!o.availableArtistSelections.contains(.musicVideos) && !o.availableArtistSelections.contains(.all))
         #expect(!o.previewPaths().contains { $0.label == "Music video" })
         // The saved artist choice comes back when videos are turned on again.
-        o.artistSelection = "all"
+        o.artistSelection = .all
         o.downloadMusicVideos = true
-        #expect(o.effectiveArtistSelection == "all")
-    }
-
-    @Test func persists() {
-        var o = DownloadOptions()
-        o.downloadMusicVideos = false
-        #expect(DownloadOptions(rawValue: o.rawValue)?.downloadMusicVideos == false)
-        #expect(DownloadOptions(rawValue: "{}")?.downloadMusicVideos == true)
+        #expect(o.effectiveArtistSelection == .all)
     }
 }

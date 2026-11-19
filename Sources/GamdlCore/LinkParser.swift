@@ -25,7 +25,7 @@ public enum LinkParser {
     }
 
     /// Returns the form to pass to gamdl, or nil if the token isn't an Apple Music link or ISRC.
-    public static func normalize(_ token: String) -> String? {
+    static func normalize(_ token: String) -> String? {
         if isISRC(token) { return token.uppercased() }
         var candidate = token
         if !candidate.contains("://") { candidate = "https://" + candidate }

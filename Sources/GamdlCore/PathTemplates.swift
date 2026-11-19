@@ -5,41 +5,119 @@ import Foundation
 /// compilation or no-album folder (and single-disc, multi-disc or no-album file name) per item.
 /// See gamdl/download/paths.py.
 public struct PathTemplates: Equatable, Sendable {
-    public var albumFolder = "{album_artist}/{album}"
-    public var compilationFolder = "Compilations/{album}"
-    public var noAlbumFolder = "{artist}/Unknown Album"
-    public var playlistFolder = "Playlists/{playlist_artist}"
-    public var singleDiscFile = "{track:02d} {title}"
-    public var multiDiscFile = "{disc}-{track:02d} {title}"
-    public var noAlbumFile = "{title}"
-    public var playlistFile = "{playlist_title}"
+    public enum Slot: String, CaseIterable, Sendable, CodingKey {
+        case albumFolder, compilationFolder, noAlbumFolder, playlistFolder
+        case singleDiscFile, multiDiscFile, noAlbumFile, playlistFile
+
+        static let folders = allCases.filter(\.isFolder)
+        static let files = allCases.filter { !$0.isFolder }
+
+        var isFolder: Bool {
+            switch self {
+            case .albumFolder, .compilationFolder, .noAlbumFolder, .playlistFolder: true
+            default: false
+            }
+        }
+
+        var gamdlDefault: String {
+            switch self {
+            case .albumFolder: "{album_artist}/{album}"
+            case .compilationFolder: "Compilations/{album}"
+            case .noAlbumFolder: "{artist}/Unknown Album"
+            case .playlistFolder: "Playlists/{playlist_artist}"
+            case .singleDiscFile: "{track:02d} {title}"
+            case .multiDiscFile: "{disc}-{track:02d} {title}"
+            case .noAlbumFile: "{title}"
+            case .playlistFile: "{playlist_title}"
+            }
+        }
+
+        var flag: String {
+            switch self {
+            case .albumFolder: "--album-folder-template"
+            case .compilationFolder: "--compilation-folder-template"
+            case .noAlbumFolder: "--no-album-folder-template"
+            case .playlistFolder: "--playlist-folder-template"
+            case .singleDiscFile: "--single-disc-file-template"
+            case .multiDiscFile: "--multi-disc-file-template"
+            case .noAlbumFile: "--no-album-file-template"
+            case .playlistFile: "--playlist-file-template"
+            }
+        }
+
+        /// What gamdl uses it for, as a field title and in error messages.
+        public var title: String {
+            switch self {
+            case .albumFolder: "Album folder"
+            case .compilationFolder: "Compilation folder"
+            case .noAlbumFolder: "Songs without an album, and videos"
+            case .playlistFolder: "Playlist file folder"
+            case .singleDiscFile: "Album track"
+            case .multiDiscFile: "Track on a multi-disc album"
+            case .noAlbumFile: "Song without an album, or video"
+            case .playlistFile: "Playlist file"
+            }
+        }
+    }
+
+    /// Always holds every slot, so `==` compares what the templates are.
+    private var values = Dictionary(uniqueKeysWithValues: Slot.allCases.map { ($0, $0.gamdlDefault) })
 
     public init() {}
 
-    /// gamdl's command-line flags for these templates.
-    public var arguments: [String] {
-        ["--album-folder-template", albumFolder,
-         "--compilation-folder-template", compilationFolder,
-         "--no-album-folder-template", noAlbumFolder,
-         "--playlist-folder-template", playlistFolder,
-         "--single-disc-file-template", singleDiscFile,
-         "--multi-disc-file-template", multiDiscFile,
-         "--no-album-file-template", noAlbumFile,
-         "--playlist-file-template", playlistFile]
+    public subscript(slot: Slot) -> String {
+        get { values[slot]! }
+        set { values[slot] = newValue }
     }
 
-    /// Each template with a name for error messages.
-    public var labeled: [(label: String, template: String)] {
-        [("Album folder", albumFolder), ("Compilation folder", compilationFolder),
-         ("No-album folder", noAlbumFolder), ("Playlist folder", playlistFolder),
-         ("Single-disc file", singleDiscFile), ("Multi-disc file", multiDiscFile),
-         ("No-album file", noAlbumFile), ("Playlist file", playlistFile)]
+    var arguments: [String] { Slot.allCases.flatMap { [$0.flag, self[$0]] } }
+}
+
+extension PathTemplates: Codable {
+    /// Missing values fall back to gamdl's defaults.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Slot.self)
+        for slot in Slot.allCases {
+            if let value = (try? c.decodeIfPresent(String.self, forKey: slot)) ?? nil { self[slot] = value }
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: Slot.self)
+        for slot in Slot.allCases { try c.encode(self[slot], forKey: slot) }
     }
 }
 
-/// How downloads are arranged into folders.
-public enum FolderLayout: String, CaseIterable, Sendable {
+/// A named choice for one group of template slots (folders or file names), plus Custom.
+public protocol PathPreset: CaseIterable, Hashable, Sendable where AllCases == [Self] {
+    static var custom: Self { get }
+    static var slots: [PathTemplates.Slot] { get }
+    var label: String { get }
+    /// The templates this preset sets; slots it leaves out get gamdl's default. Nil for Custom, which
+    /// uses the custom templates, and for presets resolved elsewhere (see `FolderLayout.flat`).
+    var templates: [PathTemplates.Slot: String]? { get }
+}
+
+extension PathPreset {
+    public static var presets: [Self] { allCases.filter { $0 != custom } }
+
+    func apply(to t: inout PathTemplates, custom: PathTemplates) {
+        for slot in Self.slots { t[slot] = templates.map { $0[slot] ?? slot.gamdlDefault } ?? custom[slot] }
+    }
+
+    /// Switching to Custom starts from the previous preset, so it's easy to tweak, unless the
+    /// custom templates were already edited (those are never overwritten).
+    static func seedCustom(_ custom: inout PathTemplates, from old: Self, to new: Self) {
+        guard new == Self.custom, old.templates != nil,
+              Self.slots.allSatisfy({ custom[$0] == $0.gamdlDefault }) else { return }
+        old.apply(to: &custom, custom: custom)
+    }
+}
+
+public enum FolderLayout: String, PathPreset {
     case artistAlbum, artistYearAlbum, artistDashAlbum, albumOnly, artistOnly, flat, custom
+
+    public static let slots = PathTemplates.Slot.folders
 
     public var label: String {
         switch self {
@@ -53,22 +131,25 @@ public enum FolderLayout: String, CaseIterable, Sendable {
         }
     }
 
-    /// Album, compilation and no-album folder templates. Flat and custom are handled by the caller.
-    public var folders: (album: String, compilation: String, noAlbum: String)? {
+    /// No folders has none: its folder is the output folder's own name (see `DownloadOptions`).
+    public var templates: [PathTemplates.Slot: String]? {
         switch self {
-        case .artistAlbum: ("{album_artist}/{album}", "Compilations/{album}", "{artist}/Unknown Album")
-        case .artistYearAlbum: ("{album_artist}/{date:%Y} - {album}", "Compilations/{date:%Y} - {album}", "{artist}/Unknown Album")
-        case .artistDashAlbum: ("{album_artist} - {album}", "Compilations - {album}", "{artist} - Unknown Album")
-        case .albumOnly: ("{album}", "{album}", "Unknown Album")
-        case .artistOnly: ("{album_artist}", "Compilations", "{artist}")
+        case .artistAlbum: [:]
+        case .artistYearAlbum: [.albumFolder: "{album_artist}/{date:%Y} - {album}",
+                                .compilationFolder: "Compilations/{date:%Y} - {album}"]
+        case .artistDashAlbum: [.albumFolder: "{album_artist} - {album}", .compilationFolder: "Compilations - {album}",
+                                .noAlbumFolder: "{artist} - Unknown Album"]
+        case .albumOnly: [.albumFolder: "{album}", .compilationFolder: "{album}", .noAlbumFolder: "Unknown Album"]
+        case .artistOnly: [.albumFolder: "{album_artist}", .compilationFolder: "Compilations", .noAlbumFolder: "{artist}"]
         case .flat, .custom: nil
         }
     }
 }
 
-/// How files are named.
-public enum FileNaming: String, CaseIterable, Sendable {
+public enum FileNaming: String, PathPreset {
     case trackTitle, title, artistTitle, trackArtistTitle, custom
+
+    public static let slots = PathTemplates.Slot.files
 
     public var label: String {
         switch self {
@@ -80,13 +161,14 @@ public enum FileNaming: String, CaseIterable, Sendable {
         }
     }
 
-    /// Single-disc, multi-disc and no-album file templates, or nil for custom.
-    public var files: (single: String, multi: String, noAlbum: String)? {
+    public var templates: [PathTemplates.Slot: String]? {
         switch self {
-        case .trackTitle: ("{track:02d} {title}", "{disc}-{track:02d} {title}", "{title}")
-        case .title: ("{title}", "{title}", "{title}")
-        case .artistTitle: ("{artist} - {title}", "{artist} - {title}", "{artist} - {title}")
-        case .trackArtistTitle: ("{track:02d} {artist} - {title}", "{disc}-{track:02d} {artist} - {title}", "{artist} - {title}")
+        case .trackTitle: [:]
+        case .title: [.singleDiscFile: "{title}", .multiDiscFile: "{title}", .noAlbumFile: "{title}"]
+        case .artistTitle: [.singleDiscFile: "{artist} - {title}", .multiDiscFile: "{artist} - {title}",
+                            .noAlbumFile: "{artist} - {title}"]
+        case .trackArtistTitle: [.singleDiscFile: "{track:02d} {artist} - {title}",
+                                 .multiDiscFile: "{disc}-{track:02d} {artist} - {title}", .noAlbumFile: "{artist} - {title}"]
         case .custom: nil
         }
     }
@@ -95,10 +177,10 @@ public enum FileNaming: String, CaseIterable, Sendable {
 /// Renders gamdl path templates the way gamdl does (Python `str.format` with its restrictions and
 /// filename clean-up), for validation and previews.
 public enum PathTemplate {
-    public static let fields = ["album", "album_artist", "album_id", "artist", "artist_id", "composer",
-                                "composer_id", "date", "disc", "disc_total", "media_type", "playlist_artist",
-                                "playlist_id", "playlist_title", "playlist_track", "title", "title_id",
-                                "track", "track_total"]
+    public static let fields = ["album", "album_artist", "artist", "title", "composer", "date", "track",
+                                "track_total", "disc", "disc_total", "media_type", "playlist_title",
+                                "playlist_artist", "playlist_track", "album_id", "artist_id", "title_id",
+                                "composer_id", "playlist_id"]
 
     public enum Value: Sendable {
         case text(String)
@@ -113,22 +195,23 @@ public enum PathTemplate {
 
     /// Why gamdl would reject this template, or nil if it's fine.
     public static func problem(in template: String) -> String? {
-        if template.trimmingCharacters(in: .whitespaces).isEmpty { return "It's empty." }
-        if template.hasPrefix("/") { return "It can't start with /." }
-        if template.split(separator: "/", omittingEmptySubsequences: false).contains(where: \.isEmpty) {
-            return "It has an empty folder name (// or a trailing /)."
-        }
-        for segment in template.split(separator: "/") {
-            do { _ = try parse(String(segment)) } catch let error as ParseError { return error.message } catch { return "Invalid template." }
-        }
-        return nil
+        do { _ = try segments(of: template); return nil } catch { return error.message }
+    }
+
+    /// The template's folder/file segments, parsed, or the reason gamdl would reject it.
+    static func segments(of template: String) throws(ParseError) -> [[Piece]] {
+        if template.trimmingCharacters(in: .whitespaces).isEmpty { throw ParseError(message: "It's empty.") }
+        if template.hasPrefix("/") { throw ParseError(message: "It can't start with /.") }
+        let segments = template.split(separator: "/", omittingEmptySubsequences: false)
+        if segments.contains(where: \.isEmpty) { throw ParseError(message: "It has an empty folder name (// or a trailing /).") }
+        return try segments.map { (segment) throws(ParseError) in try parse(String(segment)) }
     }
 
     struct ParseError: Error { let message: String }
 
     /// Python `Formatter.parse`, plus gamdl's rules: only known fields, no `!conversion`,
     /// no nested `{}` in format specs. gamdl splits on "/" before parsing, so call this per segment.
-    static func parse(_ s: String) throws -> [Piece] {
+    static func parse(_ s: String) throws(ParseError) -> [Piece] {
         var pieces: [Piece] = []
         var literal = ""
         var i = s.startIndex
@@ -165,13 +248,11 @@ public enum PathTemplate {
         return pieces
     }
 
-    /// Path components for `template` (nil if invalid). The last one gets `fileExtension` when set.
-    public static func render(_ template: String, values: [String: Value], fileExtension: String? = nil,
-                              truncate: Int? = nil) -> [String]? {
-        guard problem(in: template) == nil else { return nil }
-        let segments = template.split(separator: "/").map(String.init)
-        return segments.enumerated().map { index, segment in
-            let pieces = (try? parse(segment)) ?? []
+    static func render(_ template: String, values: [String: Value], fileExtension: String? = nil,
+                       truncate: Int? = nil) -> [String]? {
+        guard let segments = try? segments(of: template) else { return nil }
+        var components: [String] = []
+        for (index, pieces) in segments.enumerated() {
             let text = pieces.map { piece -> String in
                 switch piece {
                 case .literal(let l): return l
@@ -179,8 +260,9 @@ public enum PathTemplate {
                 }
             }.joined()
             let isFile = fileExtension != nil && index == segments.count - 1
-            return clean(text, directory: !isFile, fileExtension: isFile ? fileExtension! : "", truncate: truncate)
+            components.append(clean(text, directory: !isFile, fileExtension: isFile ? fileExtension! : "", truncate: truncate))
         }
+        return components
     }
 
     /// gamdl substitutes these when a value is missing (or a format spec doesn't fit the value).
@@ -253,7 +335,7 @@ public enum PathTemplate {
 
     /// gamdl's `_component`: replace characters macOS/Windows can't use, avoid hidden and empty names,
     /// and limit to `truncate` (max 255) UTF-8 bytes including the extension.
-    public static func clean(_ value: String, directory: Bool, fileExtension: String = "", truncate: Int? = nil) -> String {
+    static func clean(_ value: String, directory: Bool, fileExtension: String = "", truncate: Int? = nil) -> String {
         var s = String(value.unicodeScalars.map { scalar -> Character in
             "<>:\"/\\|?*".unicodeScalars.contains(scalar) || scalar.value < 0x20 || scalar.value == 0x7F
                 ? "_" : Character(scalar)
@@ -269,8 +351,7 @@ public enum PathTemplate {
         return s + fileExtension
     }
 
-    /// Escapes text so a template renders it literally.
-    public static func literal(_ s: String) -> String {
+    static func literal(_ s: String) -> String {
         s.replacingOccurrences(of: "{", with: "{{").replacingOccurrences(of: "}", with: "}}")
     }
 }

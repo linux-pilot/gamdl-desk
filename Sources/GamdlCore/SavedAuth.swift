@@ -7,7 +7,7 @@ public enum SavedAuth: Equatable, Sendable {
     case none
     case mode(String)
 
-    /// Parses the `auth.mode` value. Returns nil if the output doesn't contain it.
+    /// Nil if the output has no `auth.mode` (unlike `.none`: gamdl says nobody is signed in).
     public static func parse(configShow output: String) -> SavedAuth? {
         var inAuth = false
         for line in output.split(separator: "\n", omittingEmptySubsequences: false) {
@@ -25,13 +25,8 @@ public enum SavedAuth: Equatable, Sendable {
         return nil
     }
 
-    /// How to describe the mode to a person.
-    public static func label(for mode: String) -> String {
-        switch mode {
-        case "cookies": "cookies"
-        case "media-user-token": "media user token"
-        case "wrapper": "wrapper"
-        default: mode
-        }
-    }
+    public static func label(for mode: String) -> String { mode.replacingOccurrences(of: "-", with: " ") }
+
+    /// Signed in through Wrapper v2, the only sign-in Apple grants ALAC keys to.
+    public var isWrapper: Bool { self == .mode("wrapper") }
 }

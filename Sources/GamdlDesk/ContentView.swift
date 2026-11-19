@@ -6,17 +6,21 @@ enum ResultsTab: String, CaseIterable {
     case activity = "Activity", log = "Log"
 }
 
+enum SettingsKey {
+    static let downloadOptions = "downloadOptions"
+    static let showOptions = "showOptions"
+    static let resultsTab = "resultsTab"
+}
+
 struct ContentView: View {
     let controller: DownloadController
 
-    @AppStorage("downloadOptions") private var options = DownloadOptions()
-    @AppStorage("showOptions") private var showOptions = true
-    @AppStorage("resultsTab") private var tab = ResultsTab.activity
+    @AppStorage(SettingsKey.downloadOptions) private var options = DownloadOptions()
+    @AppStorage(SettingsKey.showOptions) private var showOptions = true
+    @AppStorage(SettingsKey.resultsTab) private var tab = ResultsTab.activity
     @State private var input = ""
-    @State private var signInDismissed = false
 
     private var parsed: LinkParser.Result { LinkParser.parse(input) }
-    /// What will actually be sent to gamdl after applying the music-video setting.
     private var plan: (inputs: [String], skippedVideos: Int) { options.inputsToDownload(parsed.valid) }
 
     private var blockingReason: String? {
@@ -29,7 +33,6 @@ struct ContentView: View {
     var body: some View {
         VStack(spacing: 0) {
             banners
-            // The links box takes about a third of the height (within limits); results get the rest.
             GeometryReader { geo in
                 VStack(spacing: 0) {
                     linksSection
@@ -46,7 +49,6 @@ struct ContentView: View {
                 .inspectorColumnWidth(min: 280, ideal: 320, max: 440)
         }
         .toolbar { toolbar }
-        .onChange(of: controller.needsSignIn) { if controller.needsSignIn { signInDismissed = false } }
         #if DEBUG
         .onReceive(NotificationCenter.default.publisher(for: DebugDriver.inputNotification)) { input = $0.object as? String ?? "" }
         .onReceive(NotificationCenter.default.publisher(for: DebugDriver.downloadNotification)) { _ in download() }
@@ -74,7 +76,7 @@ struct ContentView: View {
                 }
                 .help("Stop the download (⌘.)")
                 .keyboardShortcut(".", modifiers: .command)
-                .disabled(controller.phase != .running(since: runningSince))
+                .disabled(controller.phase.isStopping)
             } else {
                 Button(action: download) {
                     Label("Download", systemImage: "arrow.down.circle.fill")
@@ -95,31 +97,26 @@ struct ContentView: View {
         }
     }
 
-    private var runningSince: Date {
-        if case .running(let s) = controller.phase { return s }
-        return .distantPast
-    }
-
     // MARK: Banners
 
     @ViewBuilder private var banners: some View {
         if controller.gamdlPath == nil {
             Banner(systemImage: "exclamationmark.triangle.fill", tint: .orange,
                    title: "gamdl isn't installed",
-                   message: "Install it in Terminal with:  \(DownloadController.installCommand)") {
-                Button("Copy Command") { copy(DownloadController.installCommand) }
+                   message: "Install it in Terminal with:  \(Gamdl.installCommand)") {
+                Button("Copy Command") { copy(Gamdl.installCommand) }
                 Button("Check Again") { controller.locateGamdl() }
             }
-        } else if controller.losslessNeedsWrapper {
+        } else if controller.showsBanner(for: .losslessRefused) {
             Banner(systemImage: "waveform.badge.exclamationmark", tint: .orange,
                    title: "Lossless needs gamdl's Wrapper",
                    message: "Apple refused the decryption key for ALAC. Lossless only works through Wrapper v2; AAC and Dolby Atmos work with your current sign-in.") {
                 Button("Use AAC") {
-                    options.songCodec = "aac"
-                    controller.dismissLosslessNotice()
+                    options.songCodec = .aac
+                    controller.dismiss(.losslessRefused)
                 }
-                Button("About Wrapper") { NSWorkspace.shared.open(DownloadController.wrapperURL) }
-                Button("Dismiss") { controller.dismissLosslessNotice() }
+                Button("About Wrapper") { NSWorkspace.shared.open(Gamdl.wrapperURL) }
+                Button("Dismiss") { controller.dismiss(.losslessRefused) }
             }
         } else if controller.signInFlow == .waiting {
             Banner(systemImage: "terminal", tint: .blue,
@@ -140,12 +137,12 @@ struct ContentView: View {
                 Button("Try Again") { controller.signInInTerminal() }
                 Button("Dismiss") { controller.dismissSignInResult() }
             }
-        } else if controller.needsSignIn && !signInDismissed {
+        } else if controller.showsBanner(for: .signInRejected) {
             Banner(systemImage: "person.crop.circle.badge.exclamationmark", tint: .blue,
                    title: "gamdl needs to sign in to Apple Music",
                    message: "Sign in once in Terminal, or choose a cookies.txt exported from music.apple.com in Options.") {
                 Button("Sign In with Terminal…") { controller.signInInTerminal() }
-                Button("Dismiss") { signInDismissed = true }
+                Button("Dismiss") { controller.dismiss(.signInRejected) }
             }
         }
     }
@@ -436,7 +433,7 @@ struct StatusBar: View {
         case .running(let since), .stopping(let since):
             HStack(spacing: 6) {
                 ProgressView().controlSize(.small)
-                Text(controller.phase == .stopping(since: since) ? "Stopping…" : "Downloading…")
+                Text(controller.phase.isStopping ? "Stopping…" : "Downloading…")
                 TimelineView(.periodic(from: since, by: 1)) { context in
                     Text(Self.duration(context.date.timeIntervalSince(since)))
                         .monospacedDigit()

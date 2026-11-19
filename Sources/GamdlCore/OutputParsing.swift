@@ -4,13 +4,13 @@ import Foundation
 /// never occur inside a multi-byte UTF-8 character, so a character split across two reads stays intact.
 /// A lone CR rewinds the current line like a terminal does (progress-style redraws keep only the last one).
 /// Not thread-safe: feed it from one queue.
-public final class LineSplitter {
+final class LineSplitter {
     private var current = Data()
     private var pendingCR = false
 
-    public init() {}
+    init() {}
 
-    public func feed(_ data: Data) -> [String] {
+    func feed(_ data: Data) -> [String] {
         var lines: [String] = []
         for byte in data {
             if pendingCR {
@@ -28,7 +28,7 @@ public final class LineSplitter {
     }
 
     /// Call at end of stream: returns the unterminated last line, if any.
-    public func finish() -> [String] {
+    func finish() -> [String] {
         defer { pendingCR = false }
         if pendingCR { return [take()] }
         return current.isEmpty ? [] : [take()]
@@ -59,7 +59,7 @@ public struct OutputEvent: Equatable, Sendable {
     public var detail: String
     public var path: String?
 
-    public init(kind: Kind, title: String, detail: String, path: String? = nil) {
+    init(kind: Kind, title: String, detail: String, path: String? = nil) {
         self.kind = kind; self.title = title; self.detail = detail; self.path = path
     }
 
@@ -99,17 +99,24 @@ public struct OutputEvent: Equatable, Sendable {
         guard let r = s.range(of: sep, options: .backwards) else { return nil }
         return (String(s[..<r.lowerBound]), String(s[r.upperBound...]))
     }
+}
 
+/// Something in a run's output the user has to act on.
+public enum RunIssue: Hashable, Sendable {
     /// gamdl couldn't sign in; the user needs to run `gamdl auth` or pick a cookies file.
-    /// Apple refused a decryption key, e.g. ALAC without gamdl's Wrapper.
-    public static func indicatesLicenseRefusal(_ line: String) -> Bool {
-        let l = line.lowercased()
-        return l.contains("drmlicenseerror") || l.contains("unable to acquire or process decryption key")
-    }
+    case signInRejected
+    /// Apple refused the ALAC decryption key: lossless needs gamdl's Wrapper.
+    case losslessRefused
 
-    public static func indicatesSignInProblem(_ line: String) -> Bool {
+    public static func detect(in line: String, songCodec: SongCodec) -> RunIssue? {
         let l = line.lowercased()
-        return l.contains("authentication setup requires an interactive terminal")
-            || l.contains("authentication failed")
+        if l.contains("authentication setup requires an interactive terminal") || l.contains("authentication failed") {
+            return .signInRejected
+        }
+        if songCodec.needsWrapper,
+           l.contains("drmlicenseerror") || l.contains("unable to acquire or process decryption key") {
+            return .losslessRefused
+        }
+        return nil
     }
 }

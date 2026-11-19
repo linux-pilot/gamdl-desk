@@ -76,8 +76,6 @@ public final class CommandRunner: @unchecked Sendable {
         }
     }
 
-    public var processIdentifier: Int32 { process.processIdentifier }
-
     public func stop() {
         queue.async {
             guard self.started, self.exit == nil, !self.stopRequested else { return }
